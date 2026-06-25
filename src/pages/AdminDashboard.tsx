@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
+import { getDisplayName } from '../lib/utils';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, LineChart, Line } from 'recharts';
 import {
   Users, Building2, Package, Recycle, TrendingUp, Activity,
@@ -159,7 +160,7 @@ export default function AdminDashboard() {
                   'bg-slate-800 text-slate-500'
                 }`}>{i + 1}</div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-white text-sm font-medium truncate">{u.display_name ?? u.email.split('@')[0]}</p>
+                  <p className="text-white text-sm font-medium truncate">{getDisplayName(u.display_name, u.email)}</p>
                   <p className="text-slate-500 text-xs truncate">{u.email}</p>
                 </div>
                 <div className="flex items-center gap-1">

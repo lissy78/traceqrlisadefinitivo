@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase, Profile } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
+import { getDisplayName } from '../lib/utils';
 import { Trophy, Star, Medal, TrendingUp, Recycle, Crown } from 'lucide-react';
 
 interface RankEntry {
@@ -103,11 +104,11 @@ export default function RankingPage() {
                 <div className={`w-10 h-10 rounded-full border-2 flex items-center justify-center text-sm font-bold uppercase mb-1 ${
                   isMe ? 'border-emerald-400 text-emerald-400 bg-emerald-500/20' : 'border-slate-600 text-slate-400 bg-slate-800'
                 }`}>
-                  {entry?.display_name?.[0] ?? '?'}
+                  {getDisplayName(entry?.display_name, entry?.email)[0]}
                 </div>
                 <div className={`w-full rounded-t-xl flex flex-col items-center justify-center py-3 border ${medalColors[realRank - 1]}`}>
                   <span className="text-white text-xs font-semibold truncate max-w-full px-1 text-center">
-                    {entry?.display_name?.split(' ')[0] ?? 'Usuario'}
+                    {getDisplayName(entry?.display_name, entry?.email).split(' ')[0]}
                   </span>
                   <div className="flex items-center gap-0.5 mt-0.5">
                     <Star className="w-3 h-3 text-amber-400" />
@@ -127,11 +128,11 @@ export default function RankingPage() {
       {myRank >= 0 && (
         <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-2xl p-4 flex items-center gap-4">
           <div className="w-10 h-10 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 font-bold">
-            {profile?.display_name?.[0] ?? '?'}
+            {getDisplayName(profile?.display_name, profile?.email)[0]}
           </div>
           <div className="flex-1">
             <p className="text-emerald-300 font-semibold text-sm">Tu posición</p>
-            <p className="text-slate-400 text-xs">{profile?.display_name}</p>
+            <p className="text-slate-400 text-xs">{getDisplayName(profile?.display_name, profile?.email)}</p>
           </div>
           <div className="text-right">
             <p className="text-white text-2xl font-bold">#{myRank + 1}</p>
@@ -170,11 +171,11 @@ export default function RankingPage() {
                 <div className={`w-8 h-8 rounded-full border flex items-center justify-center text-xs font-bold uppercase ${
                   isMe ? 'border-emerald-500/50 text-emerald-400 bg-emerald-500/10' : 'border-slate-700 text-slate-400 bg-slate-800'
                 }`}>
-                  {entry.display_name?.[0] ?? entry.email?.[0] ?? '?'}
+                  {getDisplayName(entry.display_name, entry.email)[0]}
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className={`text-sm font-medium truncate ${isMe ? 'text-emerald-300' : 'text-white'}`}>
-                    {entry.display_name ?? entry.email.split('@')[0]}
+                    {getDisplayName(entry.display_name, entry.email)}
                     {isMe && <span className="ml-2 text-xs text-emerald-500">(tú)</span>}
                   </p>
                   <div className="flex items-center gap-1">

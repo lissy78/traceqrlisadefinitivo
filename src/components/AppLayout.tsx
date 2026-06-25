@@ -1,5 +1,6 @@
 import { ReactNode, useState } from 'react';
 import { useAuth } from '../lib/auth';
+import { getDisplayName } from '../lib/utils';
 import {
   Recycle, LayoutDashboard, QrCode, Trophy, MapPin, Package,
   Users, Building2, Settings, LogOut, Menu, X, ChevronRight, Star, Gift, Bot
@@ -77,10 +78,10 @@ export default function AppLayout({ children, activeView, onNavigate }: AppLayou
       <div className="px-4 py-4 border-b border-slate-800">
         <div className="flex items-center gap-3 px-2">
           <div className="w-9 h-9 rounded-full bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 font-semibold text-sm uppercase">
-            {profile?.display_name?.[0] ?? profile?.email?.[0] ?? '?'}
+            {getDisplayName(profile?.display_name, profile?.email)[0]}
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-white text-sm font-medium truncate">{profile?.display_name ?? profile?.email}</p>
+            <p className="text-white text-sm font-medium truncate">{getDisplayName(profile?.display_name, profile?.email)}</p>
             <span className={`inline-block text-xs px-2 py-0.5 rounded-full border font-medium mt-0.5 ${roleBadgeColor}`}>
               {roleLabel}
             </span>

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase, Profile, Company } from '../lib/supabase';
+import { getDisplayName } from '../lib/utils';
 import { Users, Search, Edit3, Shield, GraduationCap, Building2, Mail, Check, X, Loader2 } from 'lucide-react';
 
 const ROLE_CONFIG = {
@@ -47,7 +48,7 @@ export default function AdminUsers() {
   }
 
   const filtered = users.filter(u =>
-    (u.display_name ?? '').toLowerCase().includes(search.toLowerCase()) ||
+    getDisplayName(u.display_name, u.email).toLowerCase().includes(search.toLowerCase()) ||
     u.email.toLowerCase().includes(search.toLowerCase())
   );
 
@@ -99,10 +100,10 @@ export default function AdminUsers() {
                     <td className="px-5 py-3">
                       <div className="flex items-center gap-3">
                         <div className="w-8 h-8 rounded-full bg-slate-700 border border-slate-600 flex items-center justify-center text-slate-300 text-xs font-bold uppercase">
-                          {u.display_name?.[0] ?? u.email?.[0] ?? '?'}
+                          {getDisplayName(u.display_name, u.email)[0]}
                         </div>
                         <div>
-                          <p className="text-white text-sm font-medium">{u.display_name ?? '-'}</p>
+                          <p className="text-white text-sm font-medium">{getDisplayName(u.display_name, u.email)}</p>
                           <div className="flex items-center gap-1 text-slate-500 text-xs">
                             <Mail className="w-3 h-3" /> {u.email}
                           </div>

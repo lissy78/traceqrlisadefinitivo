@@ -10,7 +10,7 @@ export type Role = 'admin' | 'company' | 'student';
 export interface Profile {
   id: string;
   email: string;
-  display_name: string | null;
+  display_name: string;
   role: Role;
   company_id: string | null;
   total_points: number;

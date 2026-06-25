@@ -38,23 +38,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   async function ensureProfile(u: User) {
     const { data, error } = await supabase
       .from('profiles')
-      .select('id')
+      .select('id, display_name')
       .eq('id', u.id)
       .maybeSingle();
 
     if (error) console.error('Error checking profile:', error);
 
+    const isAdmin = u.email === 'traceqr@gmail.com';
+    const displayName = u.user_metadata?.full_name ?? u.user_metadata?.name ?? u.email?.split('@')[0] ?? 'Usuario';
+
     if (!data) {
-      const isAdmin = u.email === 'traceqr@gmail.com';
       const role = isAdmin ? 'admin' : (u.user_metadata?.role ?? 'student');
       const { error: insertError } = await supabase.from('profiles').insert({
         id: u.id,
         email: u.email ?? '',
-        display_name: u.user_metadata?.full_name ?? u.email?.split('@')[0] ?? 'Usuario',
+        display_name: displayName,
         role,
         avatar_url: u.user_metadata?.avatar_url ?? null,
       });
       if (insertError) console.error('Error creating profile:', insertError);
+    } else if (!data.display_name) {
+      await supabase.from('profiles').update({ display_name: displayName }).eq('id', u.id);
     }
     await fetchProfile(u.id);
   }
@@ -90,7 +94,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function signIn(email: string, password: string) {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) return { error: error.message };
+    if (error) {
+      if (error.message.toLowerCase().includes('invalid login credentials') || error.message.toLowerCase().includes('invalid')) {
+        return { error: 'Correo o contraseña incorrectos' };
+      }
+      if (error.message.toLowerCase().includes('email not confirmed')) {
+        return { error: 'Por favor confirma tu correo antes de iniciar sesión' };
+      }
+      return { error: error.message };
+    }
     return { error: null };
   }
 
@@ -100,7 +112,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       password,
       options: { data: { full_name: name, role } },
     });
-    if (error) return { error: error.message };
+    if (error) {
+      if (error.message.toLowerCase().includes('already registered') || error.message.toLowerCase().includes('already exists')) {
+        return { error: 'Este correo ya está registrado. Inicia sesión con tu cuenta.' };
+      }
+      return { error: error.message };
+    }
+    if (data.user && data.user.identities && data.user.identities.length === 0) {
+      return { error: 'Este correo ya está registrado. Inicia sesión con tu cuenta.' };
+    }
     if (data.user) {
       await supabase.from('profiles').upsert({
         id: data.user.id,

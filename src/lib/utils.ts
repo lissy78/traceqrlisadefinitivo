@@ -86,3 +86,9 @@ export function timeAgo(dateStr: string): string {
   const days = Math.floor(hrs / 24);
   return `hace ${days} día${days !== 1 ? 's' : ''}`;
 }
+
+export function getDisplayName(name: string | null | undefined, email: string | null | undefined): string {
+  if (name && name.trim()) return name.trim();
+  if (email && email.includes('@')) return email.split('@')[0];
+  return 'Usuario';
+}
