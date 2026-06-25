@@ -282,6 +282,25 @@ export default function AdminStock() {
 }
 
 const MIGRATION_SQL = `-- Ejecuta esto en Supabase Dashboard → SQL Editor
+
+-- 1. Agregar campos de aprobacion a companies (control de acceso por admin)
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'companies' AND column_name = 'is_approved') THEN
+    ALTER TABLE companies ADD COLUMN is_approved boolean DEFAULT false;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'companies' AND column_name = 'approved_by') THEN
+    ALTER TABLE companies ADD COLUMN approved_by uuid REFERENCES auth.users(id);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'companies' AND column_name = 'approved_at') THEN
+    ALTER TABLE companies ADD COLUMN approved_at timestamptz;
+  END IF;
+END $$;
+
+-- Actualizar empresas existentes como aprobadas
+UPDATE companies SET is_approved = true, approved_at = now() WHERE is_approved IS NULL OR is_approved = false;
+
+-- 2. Tabla para gestionar stock de refrigerios
 CREATE TABLE IF NOT EXISTS reward_stock (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   company_id uuid REFERENCES companies(id) ON DELETE CASCADE,
@@ -305,4 +324,59 @@ CREATE POLICY "reward_stock_delete" ON reward_stock FOR DELETE TO authenticated 
 ALTER TABLE redemptions ADD COLUMN IF NOT EXISTS stock_id uuid REFERENCES reward_stock(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS idx_reward_stock_company ON reward_stock(company_id);
 DROP TRIGGER IF EXISTS update_reward_stock_updated_at ON reward_stock;
-CREATE TRIGGER update_reward_stock_updated_at BEFORE UPDATE ON reward_stock FOR EACH ROW EXECUTE FUNCTION update_updated_at();`;
+CREATE TRIGGER update_reward_stock_updated_at BEFORE UPDATE ON reward_stock FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+-- 3. Restriccion unica para evitar escaneos duplicados
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'unique_user_barcode'
+    AND conrelid = 'scan_events'::regclass
+  ) THEN
+    ALTER TABLE scan_events ADD CONSTRAINT unique_user_barcode UNIQUE (user_id, barcode);
+  END IF;
+END $$;
+
+-- 4. Actualizar RLS de scan_events para que empresas solo vean datos si estan aprobadas
+DROP POLICY IF EXISTS "scan_events_select" ON scan_events;
+CREATE POLICY "scan_events_select" ON scan_events FOR SELECT
+  TO authenticated USING (
+    auth.uid() = user_id
+    OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')
+    OR EXISTS (
+      SELECT 1 FROM profiles p
+      JOIN companies c ON c.id = p.company_id
+      WHERE p.id = auth.uid() AND p.role = 'company' AND c.id = scan_events.company_id AND c.is_approved = true
+    )
+  );
+
+-- 5. Actualizar RLS de product_catalog para empresas aprobadas
+DROP POLICY IF EXISTS "product_catalog_select" ON product_catalog;
+CREATE POLICY "product_catalog_select" ON product_catalog FOR SELECT
+  TO authenticated USING (
+    company_id IS NULL
+    OR EXISTS (
+      SELECT 1 FROM companies c
+      WHERE c.id = product_catalog.company_id AND c.is_approved = true
+    )
+    OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')
+  );
+
+DROP POLICY IF EXISTS "product_catalog_update" ON product_catalog;
+CREATE POLICY "product_catalog_update" ON product_catalog FOR UPDATE
+  TO authenticated USING (
+    EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')
+    OR EXISTS (
+      SELECT 1 FROM profiles p
+      JOIN companies c ON c.id = p.company_id
+      WHERE p.id = auth.uid() AND p.role = 'company' AND c.id = product_catalog.company_id AND c.is_approved = true
+    )
+  ) WITH CHECK (
+    EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')
+    OR EXISTS (
+      SELECT 1 FROM profiles p
+      JOIN companies c ON c.id = p.company_id
+      WHERE p.id = auth.uid() AND p.role = 'company' AND c.id = product_catalog.company_id AND c.is_approved = true
+    )
+  );`;

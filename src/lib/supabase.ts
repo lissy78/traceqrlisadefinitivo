@@ -17,6 +17,7 @@ export interface Profile {
   avatar_url: string | null;
   created_at: string;
   updated_at: string;
+  company_is_approved?: boolean;
 }
 
 export interface Company {
@@ -26,6 +27,9 @@ export interface Company {
   logo_url: string | null;
   industry: string;
   description: string | null;
+  is_approved: boolean;
+  approved_by: string | null;
+  approved_at: string | null;
   created_by: string | null;
   created_at: string;
   updated_at: string;

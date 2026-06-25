@@ -2,7 +2,7 @@ import { ReactNode, useState } from 'react';
 import { useAuth } from '../lib/auth';
 import {
   Recycle, LayoutDashboard, QrCode, Trophy, MapPin, Package,
-  Users, Building2, Settings, LogOut, Menu, X, ChevronRight, Star, Gift
+  Users, Building2, Settings, LogOut, Menu, X, ChevronRight, Star, Gift, Bot
 } from 'lucide-react';
 
 interface NavItem {
@@ -32,7 +32,8 @@ export default function AppLayout({ children, activeView, onNavigate }: AppLayou
   const companyNav: NavItem[] = [
     { label: 'Dashboard', icon: <LayoutDashboard className="w-5 h-5" />, view: 'company-dashboard' },
     { label: 'Trazabilidad', icon: <Package className="w-5 h-5" />, view: 'traceability' },
-    { label: 'Analíticas', icon: <Trophy className="w-5 h-5" />, view: 'analytics' },
+    { label: 'IA Chatbot', icon: <Bot className="w-5 h-5" />, view: 'ai-chatbot' },
+    { label: 'Analiticas', icon: <Trophy className="w-5 h-5" />, view: 'analytics' },
     { label: 'Mapa', icon: <MapPin className="w-5 h-5" />, view: 'map' },
   ];
 
@@ -42,9 +43,10 @@ export default function AppLayout({ children, activeView, onNavigate }: AppLayou
     { label: 'Usuarios', icon: <Users className="w-5 h-5" />, view: 'admin-users' },
     { label: 'Productos', icon: <Package className="w-5 h-5" />, view: 'admin-products' },
     { label: 'Stock Refrigerios', icon: <Gift className="w-5 h-5" />, view: 'admin-stock' },
+    { label: 'IA Chatbot', icon: <Bot className="w-5 h-5" />, view: 'ai-chatbot' },
     { label: 'Ranking', icon: <Trophy className="w-5 h-5" />, view: 'ranking' },
     { label: 'Mapa', icon: <MapPin className="w-5 h-5" />, view: 'map' },
-    { label: 'Configuración', icon: <Settings className="w-5 h-5" />, view: 'admin-settings' },
+    { label: 'Configuracion', icon: <Settings className="w-5 h-5" />, view: 'admin-settings' },
   ];
 
   const navItems =

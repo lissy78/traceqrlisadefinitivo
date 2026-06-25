@@ -5,7 +5,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, LineChart, L
 import {
   Package, TrendingUp, Recycle, BarChart2, MapPin,
   Activity, ShoppingBag, Calendar, Building2, Search,
-  Check, Loader2, Plus
+  Check, Loader2, Plus, Shield, AlertTriangle
 } from 'lucide-react';
 
 const COLORS = ['#10b981', '#14b8a6', '#06b6d4', '#3b82f6', '#8b5cf6', '#f59e0b'];
@@ -31,7 +31,8 @@ export default function CompanyDashboard() {
       supabase.from('companies').select('*').eq('id', profile.company_id).maybeSingle(),
       supabase.from('scan_events').select('*, product:product_catalog(name, brand, image_url, material)').eq('company_id', profile.company_id).order('created_at', { ascending: false }),
     ]);
-    setCompany(co as Company);
+    const companyData = co as Company;
+    setCompany(companyData);
     setScans((sc ?? []) as ScanEvent[]);
     setLoading(false);
   }
@@ -69,6 +70,40 @@ export default function CompanyDashboard() {
       <div className="w-8 h-8 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
     </div>
   );
+
+  // Check if company is approved
+  if (company && !company.is_approved) {
+    return (
+      <div className="p-6 max-w-2xl mx-auto">
+        <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-8 text-center">
+          <div className="w-16 h-16 rounded-2xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center mx-auto mb-4">
+            <Shield className="w-8 h-8 text-amber-400" />
+          </div>
+          <h2 className="text-xl font-bold text-white mb-2">Empresa pendiente de aprobacion</h2>
+          <p className="text-slate-400 text-sm mb-4">
+            Tu empresa <strong className="text-white">{company.name}</strong> esta registrada pero aun no ha sido aprobada por el administrador.
+          </p>
+          <div className="bg-slate-900/60 rounded-xl p-4 text-left">
+            <h3 className="text-amber-300 text-sm font-medium mb-2">Que significa esto?</h3>
+            <ul className="space-y-2 text-slate-400 text-xs">
+              <li className="flex items-start gap-2">
+                <AlertTriangle className="w-3 h-3 text-amber-400 mt-0.5 shrink-0" />
+                <span>No puedes ver el dashboard de trazabilidad hasta ser aprobado</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <AlertTriangle className="w-3 h-3 text-amber-400 mt-0.5 shrink-0" />
+                <span> Los datos de tus productos siguen siendo rastreados</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <AlertTriangle className="w-3 h-3 text-amber-400 mt-0.5 shrink-0" />
+                <span>Contacta al administrador para activar tu acceso</span>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6">

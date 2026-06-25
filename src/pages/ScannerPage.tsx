@@ -285,11 +285,15 @@ export default function ScannerPage() {
       scan_data: answers,
     });
 
-    if (scanErr) { setError(scanErr.message); setLoading(false); return; }
-
-    await supabase.from('profiles')
-      .update({ total_points: (profile.total_points ?? 0) + 10 })
-      .eq('id', profile.id);
+    if (scanErr) { 
+      if (scanErr.code === '23505' || scanErr.message?.includes('unique_user_barcode')) {
+        setError('duplicate_scan');
+      } else {
+        setError(scanErr.message); 
+      }
+      setLoading(false); 
+      return; 
+    }
 
     for (const [key, val] of Object.entries(answers)) {
       const { data: existing } = await supabase
@@ -585,6 +589,31 @@ export default function ScannerPage() {
 }
 
 function ErrorBanner({ msg }: { msg: string }) {
+  if (msg === 'duplicate_scan') {
+    return (
+      <div className="bg-slate-900/80 border border-amber-500/30 rounded-2xl p-6 text-center flex flex-col items-center justify-center gap-3 animate-fade-in">
+        {/* SVG de Botella Triste */}
+        <svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" className="text-amber-400 drop-shadow-[0_0_8px_rgba(251,191,36,0.2)]">
+          <path d="M26 12V6C26 4.89543 26.8954 4 28 4H36C37.1046 4 38 4.89543 38 6V12" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"/>
+          <path d="M24 18C24 14.6863 26.6863 12 30 12H34C37.3137 12 40 14.6863 40 18V22C40 25.3137 43 28 46 31V54C46 57.3137 43.3137 60 40 60H24C20.6863 60 18 57.3137 18 54V31C21 28 24 25.3137 24 22V18Z" fill="#1e293b" stroke="currentColor" strokeWidth="2.5" strokeLinejoin="round"/>
+          <rect x="24" y="2" width="16" height="3" rx="1.5" fill="currentColor"/>
+          <path d="M28 50H36" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeDasharray="1 3"/>
+          <circle cx="27" cy="38" r="2" fill="currentColor" />
+          <circle cx="37" cy="38" r="2" fill="currentColor" />
+          <path d="M29 45C30.5 43.5 33.5 43.5 35 45" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+          <path d="M27 41C27 41.5 26.5 42 26 42C25.5 42 25 41.5 25 41C25 40.5 27 39.5 27 39.5C27 39.5 27 40.5 27 41Z" fill="#60a5fa"/>
+        </svg>
+
+        <div>
+          <h4 className="text-amber-400 font-bold text-base mb-1">¡Ups! Ya escaneaste esto</h4>
+          <p className="text-slate-400 text-xs max-w-sm mx-auto">
+            Este envase ya está registrado en tu cuenta. ¡Cada granito de arena cuenta, intenta escaneando una botella diferente! ♻️
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex items-start gap-2 bg-red-500/15 border border-red-500/30 text-red-400 rounded-xl px-4 py-3 text-sm">
       <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />

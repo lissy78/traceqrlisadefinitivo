@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { AuthProvider, useAuth } from './lib/auth';
 import AppLayout from './components/AppLayout';
+import AIChatbot from './components/AIChatbot';
 import LoginPage from './pages/LoginPage';
 import StudentDashboard from './pages/StudentDashboard';
 import ScannerPage from './pages/ScannerPage';
@@ -60,6 +61,7 @@ function AppContent() {
       case 'admin-stock': return <AdminStock />;
       case 'admin-products': return <AdminProducts />;
       case 'admin-settings': return <AdminSettings />;
+      case 'ai-chatbot': return <AIChatbot />;
 
       default: return profile.role === 'admin' ? <AdminDashboard /> : profile.role === 'company' ? <CompanyDashboard /> : <StudentDashboard onNavigate={setView} />;
     }
