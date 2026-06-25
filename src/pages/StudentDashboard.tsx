@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../lib/auth';
 import { supabase, ScanEvent, Redemption } from '../lib/supabase';
-import { timeAgo, formatPoints } from '../lib/utils';
+import { timeAgo, formatPoints, getDisplayName } from '../lib/utils';
 import {
   QrCode, Star, Recycle, Trophy, TrendingUp, Award,
   ChevronRight, Package, Clock, Gift
@@ -90,7 +90,7 @@ export default function StudentDashboard({ onNavigate }: Props) {
       {/* Header */}
       <div>
         <h1 className="text-2xl font-bold text-white">
-          Hola, {profile?.display_name?.split(' ')[0] ?? 'Usuario'} 👋
+          Hola, {getDisplayName(profile?.display_name, profile?.email).split(' ')[0]} 👋
         </h1>
         <p className="text-slate-400 text-sm mt-1">Sigue reciclando y gana puntos canjeables</p>
       </div>
