@@ -15,6 +15,7 @@ import AdminCompanies from './pages/AdminCompanies';
 import AdminUsers from './pages/AdminUsers';
 import AdminStock from './pages/AdminStock';
 import AdminProducts from './pages/AdminProducts';
+import AdminLocations from './pages/AdminLocations';
 
 function AppContent() {
   const { user, profile, loading } = useAuth();
@@ -60,6 +61,7 @@ function AppContent() {
       case 'admin-users': return <AdminUsers />;
       case 'admin-stock': return <AdminStock />;
       case 'admin-products': return <AdminProducts />;
+      case 'admin-locations': return <AdminLocations />;
       case 'admin-settings': return <AdminSettings />;
       case 'ai-chatbot': return <AIChatbot />;
 

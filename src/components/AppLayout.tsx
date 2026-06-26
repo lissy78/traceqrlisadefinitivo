@@ -2,7 +2,7 @@ import { ReactNode, useState } from 'react';
 import { useAuth } from '../lib/auth';
 import { getDisplayName } from '../lib/utils';
 import {
-  Recycle, LayoutDashboard, QrCode, Trophy, MapPin, Package,
+  Recycle, LayoutDashboard, QrCode, Trophy, MapPin, Package, MapPinned,
   Users, Building2, Settings, LogOut, Menu, X, ChevronRight, Star, Gift, Bot
 } from 'lucide-react';
 
@@ -43,6 +43,7 @@ export default function AppLayout({ children, activeView, onNavigate }: AppLayou
     { label: 'Empresas', icon: <Building2 className="w-5 h-5" />, view: 'admin-companies' },
     { label: 'Usuarios', icon: <Users className="w-5 h-5" />, view: 'admin-users' },
     { label: 'Productos', icon: <Package className="w-5 h-5" />, view: 'admin-products' },
+    { label: 'Puntos Acopio', icon: <MapPinned className="w-5 h-5" />, view: 'admin-locations' },
     { label: 'Stock Refrigerios', icon: <Gift className="w-5 h-5" />, view: 'admin-stock' },
     { label: 'IA Chatbot', icon: <Bot className="w-5 h-5" />, view: 'ai-chatbot' },
     { label: 'Ranking', icon: <Trophy className="w-5 h-5" />, view: 'ranking' },

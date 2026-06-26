@@ -17,6 +17,9 @@ export interface OFFProduct {
   brands?: string;
   categories?: string;
   image_url?: string;
+  image_front_url?: string;
+  image_front_small_url?: string;
+  images?: Record<string, { url?: string; sizes?: Record<string, { url?: string }> }>;
   nutriscore_grade?: string;
   packaging?: string;
   quantity?: string;
@@ -28,8 +31,40 @@ export async function fetchOpenFoodFacts(barcode: string): Promise<OFFProduct | 
     const res = await fetch(`https://world.openfoodfacts.org/api/v2/product/${barcode}.json`);
     if (!res.ok) return null;
     const json = await res.json();
-    if (json.status !== 1) return null;
-    return json.product as OFFProduct;
+    if (json.status !== 1 || !json.product) return null;
+
+    const product = json.product as OFFProduct;
+
+    // Try to get the best available image
+    let imageUrl = product.image_front_url || product.image_url;
+
+    // If no direct image URL, try to extract from images object
+    if (!imageUrl && product.images) {
+      const imageKeys = Object.keys(product.images).filter(k => !k.startsWith('_') && k !== 'nutrition');
+      if (imageKeys.length > 0) {
+        const firstImage = product.images[imageKeys[0]];
+        if (firstImage?.url) {
+          imageUrl = firstImage.url;
+        } else if (firstImage?.sizes?.full?.url) {
+          imageUrl = firstImage.sizes.full.url;
+        } else if (firstImage?.sizes?.small?.url) {
+          imageUrl = firstImage.sizes.small.url;
+        }
+      }
+    }
+
+    // Construct image URL if we found images but no direct URL
+    if (!imageUrl && product.images && Object.keys(product.images).length > 0) {
+      const imageKeys = Object.keys(product.images).filter(k => !k.startsWith('_') && k !== 'nutrition');
+      if (imageKeys.length > 0) {
+        imageUrl = `https://images.openfoodfacts.org/images/products/${barcode}/${imageKeys[0]}.jpg`;
+      }
+    }
+
+    return {
+      ...product,
+      image_url: imageUrl || null,
+    };
   } catch {
     return null;
   }

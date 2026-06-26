@@ -680,9 +680,9 @@ function ErrorBanner({ msg }: { msg: string }) {
         </svg>
 
         <div>
-          <h4 className="text-amber-400 font-bold text-base mb-1">¡Ups! Ya escaneaste este producto</h4>
+          <h4 className="text-amber-400 font-bold text-base mb-1">Este envase ya fue escaneado</h4>
           <p className="text-slate-400 text-xs max-w-sm mx-auto">
-            Escanea otro para continuar reciclando.
+            Este código ya figura en el sistema. Cada envase solo puede escanearse una vez de forma global para evitar duplicados. Escanea otro producto para continuar.
           </p>
         </div>
       </div>
