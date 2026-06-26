@@ -680,9 +680,9 @@ function ErrorBanner({ msg }: { msg: string }) {
         </svg>
 
         <div>
-          <h4 className="text-amber-400 font-bold text-base mb-1">¡Ups! Ya escaneaste esto</h4>
+          <h4 className="text-amber-400 font-bold text-base mb-1">¡Ups! Ya escaneaste este producto</h4>
           <p className="text-slate-400 text-xs max-w-sm mx-auto">
-            Este envase ya está registrado en tu cuenta. ¡Cada granito de arena cuenta, intenta escaneando una botella diferente! ♻️
+            Escanea otro para continuar reciclando.
           </p>
         </div>
       </div>
