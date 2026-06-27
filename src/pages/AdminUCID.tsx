@@ -205,7 +205,9 @@ export default function AdminUCID() {
         <div className="bg-blue-500/10 border border-blue-500/30 rounded-2xl p-8 text-center">
           <Building2 className="w-12 h-12 text-blue-400 mx-auto mb-4" />
           <h2 className="text-xl font-bold text-white mb-2">Vincula tu empresa</h2>
-          <p className="text-slate-400 text-sm">Necesitas estar vinculado a una empresa para generar UCIDs.</p>
+          <p className="text-slate-400 text-sm mb-4">Tu perfil de empresa no esta vinculado a una empresa registrada.</p>
+          <p className="text-slate-500 text-xs mb-4">El administrador debe asegurarse que el correo de tu cuenta coincida con el correo de la empresa registrada en el sistema.</p>
+          <p className="text-slate-500 text-xs">Contacta al administrador para vincular tu cuenta.</p>
         </div>
       </div>
     );
