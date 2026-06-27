@@ -3,7 +3,7 @@ import { useAuth } from '../lib/auth';
 import { getDisplayName } from '../lib/utils';
 import {
   Recycle, LayoutDashboard, QrCode, Trophy, MapPin, Package, MapPinned,
-  Users, Building2, Settings, LogOut, Menu, X, ChevronRight, Star, Gift, Bot
+  Users, Building2, Settings, LogOut, Menu, X, ChevronRight, Star, Gift, Bot, Hash
 } from 'lucide-react';
 
 interface NavItem {
@@ -32,6 +32,7 @@ export default function AppLayout({ children, activeView, onNavigate }: AppLayou
 
   const companyNav: NavItem[] = [
     { label: 'Dashboard', icon: <LayoutDashboard className="w-5 h-5" />, view: 'company-dashboard' },
+    { label: 'UCIDs', icon: <Hash className="w-5 h-5" />, view: 'company-ucid' },
     { label: 'Trazabilidad', icon: <Package className="w-5 h-5" />, view: 'traceability' },
     { label: 'IA Chatbot', icon: <Bot className="w-5 h-5" />, view: 'ai-chatbot' },
     { label: 'Analiticas', icon: <Trophy className="w-5 h-5" />, view: 'analytics' },
@@ -43,6 +44,7 @@ export default function AppLayout({ children, activeView, onNavigate }: AppLayou
     { label: 'Empresas', icon: <Building2 className="w-5 h-5" />, view: 'admin-companies' },
     { label: 'Usuarios', icon: <Users className="w-5 h-5" />, view: 'admin-users' },
     { label: 'Productos', icon: <Package className="w-5 h-5" />, view: 'admin-products' },
+    { label: 'UCIDs', icon: <Hash className="w-5 h-5" />, view: 'admin-ucid' },
     { label: 'Puntos Acopio', icon: <MapPinned className="w-5 h-5" />, view: 'admin-locations' },
     { label: 'Stock Refrigerios', icon: <Gift className="w-5 h-5" />, view: 'admin-stock' },
     { label: 'IA Chatbot', icon: <Bot className="w-5 h-5" />, view: 'ai-chatbot' },

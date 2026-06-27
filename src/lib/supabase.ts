@@ -121,3 +121,37 @@ export interface RewardStock {
   created_at: string;
   updated_at: string;
 }
+
+export interface UCIDBatch {
+  id: string;
+  company_id: string;
+  batch_name: string;
+  quantity: number;
+  ucid_prefix: string;
+  price_per_ucid: number;
+  total_price: number;
+  status: string;
+  created_by: string | null;
+  created_at: string;
+  generated_at: string | null;
+  printed_at: string | null;
+  notes: string | null;
+}
+
+export interface UCID {
+  id: string;
+  batch_id: string;
+  company_id: string;
+  product_id: string | null;
+  ucid_hash: string;
+  short_code: string;
+  qr_data: string;
+  status: string;
+  scanned_at: string | null;
+  scan_event_id: string | null;
+  product_name: string | null;
+  product_brand: string | null;
+  container_type: string;
+  created_at: string;
+  updated_at: string;
+}

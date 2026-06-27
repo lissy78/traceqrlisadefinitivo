@@ -119,7 +119,7 @@ export default function AIChatbot() {
     }
 
     // Time-based insights
-    const hours = (scans ?? []).map((s: Record<string, unknown>) => new Date((s as Record<string, string>).created_at).getHour());
+    const hours = (scans ?? []).map((s: Record<string, unknown>) => new Date((s as Record<string, string>).created_at).getHours());
     const peakHours = findPeakHours(hours);
     if (peakHours.length > 0) {
       generatedInsights.push({

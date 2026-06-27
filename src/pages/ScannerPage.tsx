@@ -63,6 +63,38 @@ async function matchBrandToCompany(brand: string | null): Promise<{ id: string; 
   return exact ?? data[0];
 }
 
+// Detect if code is a TraceQR UCID (QR from our platform)
+function isTraceQRUCID(code: string): { isUCID: boolean; shortCode?: string; ucidHash?: string } {
+  // Pattern 1: Full URL like traceqr.app/s/SHORTCODE/HASHPART
+  const urlMatch = code.match(/traceqr\.app\/s\/([A-Z0-9]{8})\/([a-f0-9]{16})/i);
+  if (urlMatch) {
+    return { isUCID: true, shortCode: urlMatch[1], ucidHash: undefined };
+  }
+  // Pattern 2: Just short code with hash part: SHORTCODE/HASHPART
+  const shortMatch = code.match(/^([A-Z0-9]{8})\/([a-f0-9]{16,})$/i);
+  if (shortMatch) {
+    return { isUCID: true, shortCode: shortMatch[1], ucidHash: undefined };
+  }
+  // Pattern 3: 128-char hex hash (full UCID hash)
+  if (/^[a-f0-9]{128}$/i.test(code)) {
+    return { isUCID: true, shortCode: undefined, ucidHash: code.toLowerCase() };
+  }
+  return { isUCID: false };
+}
+
+// Validate UCID with backend
+async function validateUCID(ucidHash: string): Promise<{ valid: boolean; error?: string; data?: Record<string, unknown> }> {
+  try {
+    const { data, error } = await supabase.functions.invoke('ucid-generator', {
+      body: { action: 'validate', ucidHash },
+    });
+    if (error) return { valid: false, error: error.message };
+    return data;
+  } catch {
+    return { valid: false, error: 'Error al validar UCID' };
+  }
+}
+
 export default function ScannerPage() {
   const { profile, refreshProfile } = useAuth();
   const [step, setStep] = useState<Step>('scan');
@@ -182,6 +214,59 @@ export default function ScannerPage() {
     setError('');
     setMatchedCompany(null);
 
+    // Check if this is a TraceQR UCID (unique container identifier)
+    const ucidCheck = isTraceQRUCID(code);
+    if (ucidCheck.isUCID) {
+      // This is a UCID - validate it
+      const ucidHash = ucidCheck.ucidHash || code.toLowerCase();
+      const validation = await validateUCID(ucidHash);
+
+      if (!validation.valid) {
+        setError(validation.error || 'UCID invalido');
+        setLoading(false);
+        return;
+      }
+
+      // UCID is valid - get company info
+      const ucidData = validation.data as Record<string, unknown>;
+      const companyData = ucidData.company_id ? await supabase
+        .from('companies')
+        .select('id, name')
+        .eq('id', ucidData.company_id as string)
+        .maybeSingle() : null;
+
+      if (companyData?.data) {
+        setMatchedCompany({ id: companyData.data.id, name: companyData.data.name });
+      }
+
+      // Set product info from UCID
+      const ucidProduct: ProductCatalog = {
+        id: '',
+        barcode: ucidHash.slice(0, 24),
+        name: (ucidData.product_name as string) || `UCID: ${ucidData.short_code}`,
+        brand: (ucidData.product_brand as string) || null,
+        category: null,
+        company_id: (ucidData.company_id as string) || null,
+        image_url: null,
+        description: null,
+        material: (ucidData.container_type as string) || 'PET',
+        weight_grams: null,
+        off_data: { ucid_hash: ucidHash, short_code: ucidData.short_code, validated: true },
+        ai_confidence: 1,
+        scan_count: 1,
+        created_at: '',
+        updated_at: '',
+      };
+      setProduct(ucidProduct);
+
+      // Store UCID hash for later use
+      setAnswers(prev => ({ ...prev, _ucid_id: ucidData.ucid_id as string, _ucid_hash: ucidHash }));
+      setLoading(false);
+      setStep('questions');
+      return;
+    }
+
+    // Standard barcode flow
     const { data: existing } = await supabase
       .from('product_catalog')
       .select('*')
@@ -258,12 +343,14 @@ export default function ScannerPage() {
 
   async function handleSubmitAnswers() {
     if (!profile) return;
-    const unanswered = SCAN_QUESTIONS.filter(q => !answers[q.key]);
+    const unanswered = SCAN_QUESTIONS.filter(q => !answers[q.key] && !q.key.startsWith('_'));
     if (unanswered.length > 0) { setError('Por favor responde todas las preguntas'); return; }
     setLoading(true);
     setError('');
 
     const token = await generateScanToken(profile.id, scannedCode);
+    const ucidId = answers._ucid_id as string | undefined;
+    const ucidHash = answers._ucid_hash as string | undefined;
 
     // Use brand_name answer to match company if not already matched
     const brandAnswer = answers['brand_name'];
@@ -295,7 +382,7 @@ export default function ScannerPage() {
     const { error: scanErr } = await supabase.from('scan_events').insert({
       user_id: profile.id,
       barcode: scannedCode,
-      scan_type: 'barcode',
+      scan_type: ucidId ? 'qr' : 'barcode',
       acquisition_source: answers['acquisition_source'],
       points_earned: 10,
       token_hash: token,
@@ -304,14 +391,30 @@ export default function ScannerPage() {
       scan_data: answers,
     });
 
-    if (scanErr) { 
-      if (scanErr.code === '23505' || scanErr.message?.includes('unique_user_barcode')) {
+    if (scanErr) {
+      if (scanErr.code === '23505' || scanErr.message?.includes('unique_user_barcode') || scanErr.message?.includes('unique_barcode_globally')) {
         setError('duplicate_scan');
       } else {
-        setError(scanErr.message); 
+        setError(scanErr.message);
       }
-      setLoading(false); 
-      return; 
+      setLoading(false);
+      return;
+    }
+
+    // If this was a UCID scan, mark the UCID as scanned
+    if (ucidId) {
+      const { data: scanEvent } = await supabase
+        .from('scan_events')
+        .select('id')
+        .eq('token_hash', token)
+        .maybeSingle();
+      await supabase.from('ucids')
+        .update({
+          status: 'scanned',
+          scanned_at: new Date().toISOString(),
+          scan_event_id: scanEvent?.id || null,
+        })
+        .eq('id', ucidId);
     }
 
     for (const [key, val] of Object.entries(answers)) {

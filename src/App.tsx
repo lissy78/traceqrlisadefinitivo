@@ -16,6 +16,7 @@ import AdminUsers from './pages/AdminUsers';
 import AdminStock from './pages/AdminStock';
 import AdminProducts from './pages/AdminProducts';
 import AdminLocations from './pages/AdminLocations';
+import AdminUCID from './pages/AdminUCID';
 
 function AppContent() {
   const { user, profile, loading } = useAuth();
@@ -54,6 +55,8 @@ function AppContent() {
       case 'company-dashboard': return <CompanyDashboard />;
       case 'traceability': return <TraceabilityPage />;
       case 'analytics': return <CompanyDashboard />;
+      case 'admin-ucid': return <AdminUCID />;
+      case 'company-ucid': return <AdminUCID />;
 
       // Admin views
       case 'admin-dashboard': return <AdminDashboard />;
