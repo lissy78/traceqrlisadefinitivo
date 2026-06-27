@@ -88,28 +88,9 @@ export default function AdminCompanies() {
       })
       .eq('id', company.id);
 
-    if (error) {
-      console.error('Error toggling approval:', error);
-      return;
+    if (!error) {
+      await loadCompanies();
     }
-
-    // Sync the linked user's profile: grant company_id when approved, remove when revoked
-    if (newStatus) {
-      // Approve: link the profile with matching email to this company
-      await supabase
-        .from('profiles')
-        .update({ company_id: company.id })
-        .eq('email', company.email)
-        .is('company_id', null);
-    } else {
-      // Revoke: remove company_id from profiles linked to this company
-      await supabase
-        .from('profiles')
-        .update({ company_id: null })
-        .eq('company_id', company.id);
-    }
-
-    await loadCompanies();
   }
 
   const filtered = companies.filter(c =>
