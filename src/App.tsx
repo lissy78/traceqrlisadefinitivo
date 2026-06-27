@@ -18,6 +18,7 @@ import AdminProducts from './pages/AdminProducts';
 import AdminLocations from './pages/AdminLocations';
 import AdminUCID from './pages/AdminUCID';
 import UCIDPrint from './pages/UCIDPrint';
+import { Shield, AlertTriangle } from 'lucide-react';
 
 function AppContent() {
   const { user, profile, loading } = useAuth();
@@ -43,7 +44,15 @@ function AppContent() {
   const defaultView = profile.role === 'admin' ? 'admin-dashboard' : profile.role === 'company' ? 'company-dashboard' : 'dashboard';
   const activeView = view === 'dashboard' && profile.role !== 'student' ? defaultView : view;
 
+  // Block ALL company views if the company is not yet approved by admin
+  const isCompanyApproved = profile.role !== 'company' || profile.company_is_approved === true;
+
   function renderPage() {
+    // Company users without approval see a pending screen everywhere
+    if (profile.role === 'company' && !profile.company_is_approved) {
+      return <PendingApproval />;
+    }
+
     switch (activeView) {
       // Student views
       case 'dashboard': return <StudentDashboard onNavigate={setView} />;
@@ -78,6 +87,39 @@ function AppContent() {
     <AppLayout activeView={activeView} onNavigate={v => setView(v)}>
       {renderPage()}
     </AppLayout>
+  );
+}
+
+function PendingApproval() {
+  return (
+    <div className="p-6 max-w-2xl mx-auto h-full flex items-center">
+      <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-8 text-center w-full">
+        <div className="w-16 h-16 rounded-2xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center mx-auto mb-4">
+          <Shield className="w-8 h-8 text-amber-400" />
+        </div>
+        <h2 className="text-xl font-bold text-white mb-2">Empresa pendiente de aprobacion</h2>
+        <p className="text-slate-400 text-sm mb-4">
+          Tu empresa esta registrada pero aun no ha sido aprobada por el administrador.
+        </p>
+        <div className="bg-slate-900/60 rounded-xl p-4 text-left">
+          <h3 className="text-amber-300 text-sm font-medium mb-2">Que significa esto?</h3>
+          <ul className="space-y-2 text-slate-400 text-xs">
+            <li className="flex items-start gap-2">
+              <AlertTriangle className="w-3 h-3 text-amber-400 mt-0.5 shrink-0" />
+              <span>No puedes ver el dashboard de trazabilidad hasta ser aprobado</span>
+            </li>
+            <li className="flex items-start gap-2">
+              <AlertTriangle className="w-3 h-3 text-amber-400 mt-0.5 shrink-0" />
+              <span>No puedes generar ni imprimir UCIDs</span>
+            </li>
+            <li className="flex items-start gap-2">
+              <AlertTriangle className="w-3 h-3 text-amber-400 mt-0.5 shrink-0" />
+              <span>Contacta al administrador para activar tu acceso</span>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </div>
   );
 }
 

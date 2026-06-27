@@ -25,20 +25,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   async function fetchProfile(userId: string) {
     const { data, error } = await supabase
       .from('profiles')
-      .select('*')
+      .select('*, company_is_approved:companies!left(is_approved)')
       .eq('id', userId)
       .maybeSingle();
     if (error) {
       console.error('Error fetching profile:', error);
       return;
     }
-    if (data) setProfile(data as Profile);
+    if (data) {
+      // Flatten the company_is_approved from the left join
+      const d = data as any;
+      const flat = {
+        ...d,
+        company_is_approved: d.companies?.is_approved ?? null,
+      };
+      delete flat.companies;
+      setProfile(flat as Profile);
+    }
   }
 
   async function ensureProfile(u: User) {
     const { data, error } = await supabase
       .from('profiles')
-      .select('id, display_name')
+      .select('id, display_name, role, company_id')
       .eq('id', u.id)
       .maybeSingle();
 
@@ -46,19 +55,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const isAdmin = u.email === 'traceqr@gmail.com';
     const displayName = u.user_metadata?.full_name ?? u.user_metadata?.name ?? u.email?.split('@')[0] ?? 'Usuario';
+    const role = isAdmin ? 'admin' : (u.user_metadata?.role ?? 'student');
+
+    let companyId: string | null = null;
+
+    // Auto-link company users to their company by email
+    if (role === 'company' && u.email) {
+      const { data: company } = await supabase
+        .from('companies')
+        .select('id')
+        .eq('email', u.email)
+        .maybeSingle();
+      if (company) {
+        companyId = company.id;
+      }
+    }
 
     if (!data) {
-      const role = isAdmin ? 'admin' : (u.user_metadata?.role ?? 'student');
       const { error: insertError } = await supabase.from('profiles').insert({
         id: u.id,
         email: u.email ?? '',
         display_name: displayName,
         role,
+        company_id: companyId,
         avatar_url: u.user_metadata?.avatar_url ?? null,
       });
       if (insertError) console.error('Error creating profile:', insertError);
-    } else if (!data.display_name) {
-      await supabase.from('profiles').update({ display_name: displayName }).eq('id', u.id);
+    } else {
+      const updates: Record<string, unknown> = {};
+      if (!data.display_name) updates.display_name = displayName;
+      if (companyId && !data.company_id) updates.company_id = companyId;
+      if (Object.keys(updates).length > 0) {
+        await supabase.from('profiles').update(updates).eq('id', u.id);
+      }
     }
     await fetchProfile(u.id);
   }
