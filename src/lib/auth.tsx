@@ -25,14 +25,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   async function fetchProfile(userId: string) {
     const { data, error } = await supabase
       .from('profiles')
-      .select('*')
+      .select('*, company_is_approved:companies!left(is_approved)')
       .eq('id', userId)
       .maybeSingle();
     if (error) {
       console.error('Error fetching profile:', error);
       return;
     }
-    if (data) setProfile(data as Profile);
+    if (data) {
+      // Flatten the company_is_approved from the left join
+      const d = data as any;
+      const flat = {
+        ...d,
+        company_is_approved: d.companies?.is_approved ?? null,
+      };
+      delete flat.companies;
+      setProfile(flat as Profile);
+    }
   }
 
   async function ensureProfile(u: User) {
