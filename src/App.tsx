@@ -9,7 +9,9 @@ import RankingPage from './pages/RankingPage';
 import MapPage from './pages/MapPage';
 import PointsPage from './pages/PointsPage';
 import CompanyDashboard from './pages/CompanyDashboard';
+import CompanyMapPage from './pages/CompanyMapPage';
 import TraceabilityPage from './pages/TraceabilityPage';
+import UCIDTrackingPage from './pages/UCIDTrackingPage';
 import AdminDashboard from './pages/AdminDashboard';
 import AdminCompanies from './pages/AdminCompanies';
 import AdminUsers from './pages/AdminUsers';
@@ -22,9 +24,16 @@ import UCIDPrint from './pages/UCIDPrint';
 function AppContent() {
   const { user, profile, loading } = useAuth();
   const [view, setView] = useState<string>(() => {
-    // Default view per role is set after profile loads
+    // Check for public tracking page
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('track')) return 'public-tracking';
     return 'dashboard';
   });
+
+  // Public tracking page - no auth required
+  if (view === 'public-tracking') {
+    return <UCIDTrackingPage />;
+  }
 
   if (loading) {
     return (
@@ -54,11 +63,13 @@ function AppContent() {
 
       // Company views
       case 'company-dashboard': return <CompanyDashboard />;
+      case 'company-map': return <CompanyMapPage />;
       case 'traceability': return <TraceabilityPage />;
       case 'analytics': return <CompanyDashboard />;
       case 'admin-ucid': return <AdminUCID />;
       case 'company-ucid': return <AdminUCID />;
       case 'ucid-print': return <UCIDPrint />;
+      case 'public-tracking': return <UCIDTrackingPage />;
 
       // Admin views
       case 'admin-dashboard': return <AdminDashboard />;
