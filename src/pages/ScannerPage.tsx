@@ -292,6 +292,8 @@ export default function ScannerPage() {
       setAnswers(prev => ({ ...prev, _ucid_id: ucidData.ucid_id as string, _ucid_hash: ucidHash }));
       setLoading(false);
       setStep('questions');
+      // Auto-request geolocation immediately
+      requestGeolocation();
       return;
     }
 
@@ -368,6 +370,8 @@ export default function ScannerPage() {
     }
     setLoading(false);
     setStep('questions');
+    // Auto-request geolocation immediately
+    requestGeolocation();
   }, []);
 
   async function handleSubmitAnswers() {
@@ -515,6 +519,7 @@ export default function ScannerPage() {
   async function requestGeolocation() {
     if (!navigator.geolocation) {
       setAnswers(prev => ({ ...prev, location: 'Geolocalización no disponible' }));
+      setGeoStatus('error');
       return;
     }
     setGeoStatus('requesting');
@@ -553,11 +558,15 @@ export default function ScannerPage() {
           }
         }
       },
-      () => {
+      err => {
         setGeoStatus('error');
-        setAnswers(prev => ({ ...prev, location: 'No disponible' }));
+        let errMsg = 'No disponible';
+        if (err.code === 1) errMsg = 'Permiso denegado. Activa la ubicación para registrar el punto de reciclaje.';
+        else if (err.code === 3) errMsg = 'Tiempo agotado. Intenta de nuevo.';
+        setAnswers(prev => ({ ...prev, location: errMsg }));
+        setLocationWarning(errMsg);
       },
-      { enableHighAccuracy: true, timeout: 10000 }
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
     );
   }
 
@@ -741,6 +750,36 @@ export default function ScannerPage() {
 
           <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-5 space-y-5">
             <h2 className="text-white font-semibold">Cuéntanos más</h2>
+
+            {/* Auto-geolocation status banner */}
+            {geoStatus === 'requesting' && (
+              <div className="flex items-center gap-3 bg-blue-500/10 border border-blue-500/30 rounded-xl px-4 py-3">
+                <Loader2 className="w-5 h-5 animate-spin text-blue-400 shrink-0" />
+                <div>
+                  <p className="text-blue-300 text-sm font-medium">Capturando tu ubicación en tiempo real...</p>
+                  <p className="text-slate-400 text-xs mt-0.5">Necesario para registrar el punto de reciclaje en el mapa</p>
+                </div>
+              </div>
+            )}
+            {geoStatus === 'granted' && (
+              <div className="flex items-center gap-3 bg-emerald-500/10 border border-emerald-500/30 rounded-xl px-4 py-3">
+                <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+                <div>
+                  <p className="text-emerald-300 text-sm font-medium">Ubicación capturada correctamente</p>
+                  <p className="text-slate-400 text-xs font-mono mt-0.5">{answers['location']}</p>
+                </div>
+              </div>
+            )}
+            {geoStatus === 'error' && (
+              <div className="flex items-center gap-3 bg-amber-500/10 border border-amber-500/30 rounded-xl px-4 py-3">
+                <AlertCircle className="w-5 h-5 text-amber-400 shrink-0" />
+                <div>
+                  <p className="text-amber-300 text-sm font-medium">No se pudo obtener la ubicación</p>
+                  <p className="text-slate-400 text-xs mt-0.5">{locationWarning ?? 'Activa los permisos de ubicación para registrar el punto en el mapa'}</p>
+                </div>
+              </div>
+            )}
+
             {SCAN_QUESTIONS.map(q => {
               // Skip if showIf condition is not met
               if (q.showIf && answers[q.showIf.key] !== q.showIf.value) return null;
