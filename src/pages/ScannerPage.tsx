@@ -74,7 +74,7 @@ async function matchBrandToCompany(brand: string | null): Promise<{ id: string; 
 // Detect if code is a TraceQR UCID (QR from our platform)
 function isTraceQRUCID(code: string): { isUCID: boolean; shortCode?: string; ucidHash?: string } {
   // Pattern 1: Full URL like traceqr.app/s/SHORTCODE/HASHPART
-  const urlMatch = code.match(/traceqr\.app\/s\/([A-Z0-9]{8})\/([a-f0-9]{16})/i);
+  const urlMatch = code.match(/traceqr\.app\/s\/([A-Z0-9]{8})\/([a-f0-9]+)/i);
   if (urlMatch) {
     return { isUCID: true, shortCode: urlMatch[1], ucidHash: undefined };
   }
@@ -90,14 +90,34 @@ function isTraceQRUCID(code: string): { isUCID: boolean; shortCode?: string; uci
   return { isUCID: false };
 }
 
-// Validate UCID with backend
-async function validateUCID(ucidHash: string): Promise<{ valid: boolean; error?: string; data?: Record<string, unknown> }> {
+// Look up UCID by short_code or full hash, then validate
+async function lookupAndValidateUCID(shortCode?: string, ucidHash?: string): Promise<{ valid: boolean; error?: string; data?: Record<string, unknown> }> {
   try {
-    const { data, error } = await supabase.functions.invoke('ucid-generator', {
-      body: { action: 'validate', ucidHash },
-    });
-    if (error) return { valid: false, error: error.message };
-    return data;
+    // If we have the full hash, use the edge function
+    if (ucidHash && /^[a-f0-9]{128}$/i.test(ucidHash)) {
+      const { data, error } = await supabase.functions.invoke('ucid-generator', {
+        body: { action: 'validate', ucidHash },
+      });
+      if (error) return { valid: false, error: error.message };
+      return data;
+    }
+
+    // If we only have short_code, look up directly in the DB
+    if (shortCode) {
+      const { data, error } = await supabase
+        .from('ucids')
+        .select('*')
+        .eq('short_code', shortCode.toUpperCase())
+        .maybeSingle();
+
+      if (error) return { valid: false, error: error.message };
+      if (!data) return { valid: false, error: 'UCID no encontrado' };
+      if (data.status === 'scanned') return { valid: false, error: 'Este envase ya fue escaneado' };
+
+      return { valid: true, data: { ...data, ucid_id: data.id, ucid_hash: data.ucid_hash } };
+    }
+
+    return { valid: false, error: 'Código UCID inválido' };
   } catch {
     return { valid: false, error: 'Error al validar UCID' };
   }
@@ -227,9 +247,8 @@ export default function ScannerPage() {
     // Check if this is a TraceQR UCID (unique container identifier)
     const ucidCheck = isTraceQRUCID(code);
     if (ucidCheck.isUCID) {
-      // This is a UCID - validate it
-      const ucidHash = ucidCheck.ucidHash || code.toLowerCase();
-      const validation = await validateUCID(ucidHash);
+      // This is a UCID - validate it (lookup by short_code or full hash)
+      const validation = await lookupAndValidateUCID(ucidCheck.shortCode, ucidCheck.ucidHash);
 
       if (!validation.valid) {
         setError(validation.error || 'UCID invalido');

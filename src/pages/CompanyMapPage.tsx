@@ -117,7 +117,19 @@ export default function CompanyMapPage() {
 
     (scans ?? []).forEach(scan => {
       const sd = (scan.scan_data as Record<string, unknown>) ?? {};
-      const ucid = (ucids ?? []).find(u => u.scan_event_id === scan.id);
+      const ucid = (ucids ?? []).find(u => u.scan_event_id === scan.id)
+        ?? (ucids ?? []).find(u => scan.barcode?.includes(`/s/${u.short_code}/`));
+
+      // Parse coordinates from scan_data.location text if location_lat/lng are null
+      let scanLat = scan.location_lat;
+      let scanLng = scan.location_lng;
+      if ((!scanLat || !scanLng) && sd.location) {
+        const coordMatch = (sd.location as string).match(/^(-?[0-9]+\.?[0-9]*),\s*(-?[0-9]+\.?[0-9]*)/);
+        if (coordMatch) {
+          scanLat = parseFloat(coordMatch[1]);
+          scanLng = parseFloat(coordMatch[2]);
+        }
+      }
 
       const routePoints: ContainerRoute['route_points'] = [];
 
@@ -133,10 +145,10 @@ export default function CompanyMapPage() {
       }
 
       // Scan point: Where user scanned the package
-      if (scan.location_lat && scan.location_lng) {
+      if (scanLat && scanLng) {
         routePoints.push({
-          lat: scan.location_lat,
-          lng: scan.location_lng,
+          lat: scanLat,
+          lng: scanLng,
           name: (sd.collection_point as string) ?? 'Punto de escaneo',
           date: scan.created_at,
           type: 'scan'

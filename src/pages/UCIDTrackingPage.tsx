@@ -167,6 +167,16 @@ export default function UCIDTrackingPage() {
         scanEvent = data as Record<string, unknown> | null;
       }
 
+      // Fallback: find scan_event by short_code in barcode
+      if (!scanEvent && ucidData.short_code) {
+        const { data } = await supabase
+          .from('scan_events')
+          .select('*')
+          .ilike('barcode', `%/s/${ucidData.short_code}/%`)
+          .maybeSingle();
+        scanEvent = data as Record<string, unknown> | null;
+      }
+
       // Build tracking result
       const steps: TrackingStep[] = [];
       const timeline: TrackingResult['timeline'] = [];
@@ -209,8 +219,17 @@ export default function UCIDTrackingPage() {
       // Step 3: Scanned by user
       if (scanEvent) {
         const sd = (scanEvent.scan_data as Record<string, unknown>) ?? {};
-        const scanLat = scanEvent.location_lat as number | null;
-        const scanLng = scanEvent.location_lng as number | null;
+        let scanLat = scanEvent.location_lat as number | null;
+        let scanLng = scanEvent.location_lng as number | null;
+
+        // Fallback: parse coordinates from scan_data.location text
+        if ((!scanLat || !scanLng) && sd.location) {
+          const coordMatch = (sd.location as string).match(/^(-?[0-9]+\.?[0-9]*),\s*(-?[0-9]+\.?[0-9]*)/);
+          if (coordMatch) {
+            scanLat = parseFloat(coordMatch[1]);
+            scanLng = parseFloat(coordMatch[2]);
+          }
+        }
 
         steps.push({
           id: 'scanned',
