@@ -38,10 +38,12 @@ const SCAN_QUESTIONS: Array<{
   { key: 'brand_name', label: '¿Cuál es la marca del producto?', type: 'select', options: ['Coca-Cola', 'Colombiana', 'Postobón', 'Pepsi', 'Sprite', 'Fanta', 'Bavaria', 'Águila', 'Club Colombia', 'Cristal', 'Brisa', 'Manantial', 'Nestlé', 'Otro'] },
   { key: 'other_brand', label: 'Especifica la marca', type: 'text', options: [], showIf: { key: 'brand_name', value: 'Otro' } },
   { key: 'industry_type', label: '¿A qué industria pertenece?', type: 'select', options: ['Bebidas', 'Alimentos', 'Farmacéutica / Droguería', 'Cosméticos / Belleza', 'Limpieza del hogar', 'Otro'] },
+  { key: 'other_industry', label: 'Especifica la industria', type: 'text', options: [], showIf: { key: 'industry_type', value: 'Otro' } },
   { key: 'material_type', label: '¿Qué tipo de plástico es?', type: 'select', options: PLASTIC_TYPES },
   { key: 'container_size', label: '¿Cuál es el tamaño del envase?', type: 'select', options: ['Pequeño (< 500ml)', 'Mediano (500ml - 1L)', 'Grande (> 1L)'] },
   { key: 'container_condition', label: '¿En qué estado está el envase?', type: 'select', options: ['Vacío', 'Parcialmente lleno', 'Lleno (sin abrir)'] },
   { key: 'collection_point', label: '¿En qué punto de acopio lo entregarás?', type: 'select', options: COLLECTION_POINTS },
+  { key: 'other_collection_point', label: 'Especifica el punto de acopio', type: 'text', options: [], showIf: { key: 'collection_point', value: 'Otro' } },
   { key: 'location', label: 'Ubicación actual (GPS)', type: 'location', options: [] },
 ];
 
@@ -390,6 +392,16 @@ export default function ScannerPage() {
       setError('Por favor especifica el nombre de la marca');
       return;
     }
+    // If industry is "Otro", verify other_industry is filled
+    if (answers['industry_type'] === 'Otro' && !answers['other_industry']?.trim()) {
+      setError('Por favor especifica la industria');
+      return;
+    }
+    // If collection_point is "Otro", verify other_collection_point is filled
+    if (answers['collection_point'] === 'Otro' && !answers['other_collection_point']?.trim()) {
+      setError('Por favor especifica el punto de acopio');
+      return;
+    }
 
     setLoading(true);
     setError('');
@@ -401,6 +413,9 @@ export default function ScannerPage() {
     // Use brand_name answer to match company if not already matched
     // If "Otro" was selected, use the custom brand
     const brandAnswer = answers['brand_name'] === 'Otro' ? answers['other_brand'] : answers['brand_name'];
+    const industryAnswer = answers['industry_type'] === 'Otro' ? answers['other_industry'] : answers['industry_type'];
+    const collectionPointAnswer = answers['collection_point'] === 'Otro' ? answers['other_collection_point'] : answers['collection_point'];
+
     let companyId = product?.company_id ?? matchedCompany?.id ?? null;
     let resolvedCompany = matchedCompany;
     if (!companyId && brandAnswer) {
@@ -419,17 +434,19 @@ export default function ScannerPage() {
           : 'Otro plástico';
         updates.material = mat;
       }
-      if (answers['industry_type']) updates.category = answers['industry_type'];
+      if (industryAnswer) updates.category = industryAnswer;
       if (companyId && !product.company_id) updates.company_id = companyId;
       if (Object.keys(updates).length > 0) {
         await supabase.from('product_catalog').update(updates).eq('id', product.id);
       }
     }
 
-    // Prepare scan data with all answers including custom brand
+    // Prepare scan data with all answers including custom values
     const scanData = {
       ...answers,
       resolved_brand: brandAnswer,
+      resolved_industry: industryAnswer,
+      resolved_collection_point: collectionPointAnswer,
     };
 
     const { error: scanErr } = await supabase.from('scan_events').insert({
@@ -477,8 +494,18 @@ export default function ScannerPage() {
     }
 
     for (const [key, val] of Object.entries(answers)) {
-      // Skip internal keys and empty values
-      if (key.startsWith('_') || !val || val === 'Otro') continue;
+      // Skip internal keys, empty values, "Otro" selections, and other_* fields (we save resolved values instead)
+      if (key.startsWith('_') || !val || val === 'Otro' || key.startsWith('other_')) continue;
+
+      // Use resolved values for brand, industry, and collection_point
+      let valueToSave = val;
+      if (key === 'brand_name' && answers['brand_name'] === 'Otro') {
+        valueToSave = answers['other_brand'] || val;
+      } else if (key === 'industry_type' && answers['industry_type'] === 'Otro') {
+        valueToSave = answers['other_industry'] || val;
+      } else if (key === 'collection_point' && answers['collection_point'] === 'Otro') {
+        valueToSave = answers['other_collection_point'] || val;
+      }
 
       const { data: existing } = await supabase
         .from('ai_product_responses')
@@ -488,18 +515,18 @@ export default function ScannerPage() {
         .maybeSingle();
 
       if (existing) {
-        if (existing.answer === val) {
+        if (existing.answer === valueToSave) {
           await supabase.from('ai_product_responses')
             .update({ vote_count: existing.vote_count + 1, confidence: Math.min(1, existing.confidence + 0.05) })
             .eq('id', existing.id);
         } else if (existing.vote_count < 3) {
           await supabase.from('ai_product_responses')
-            .update({ answer: val, confidence: 0.5, vote_count: 1 })
+            .update({ answer: valueToSave, confidence: 0.5, vote_count: 1 })
             .eq('id', existing.id);
         }
       } else {
         await supabase.from('ai_product_responses').insert({
-          barcode: scannedCode, question_key: key, answer: val, confidence: 0.5, vote_count: 1,
+          barcode: scannedCode, question_key: key, answer: valueToSave, confidence: 0.5, vote_count: 1,
         });
       }
     }
