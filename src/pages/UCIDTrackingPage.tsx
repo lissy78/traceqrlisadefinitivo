@@ -308,47 +308,79 @@ export default function UCIDTrackingPage() {
       maxZoom: 19,
     }).addTo(map);
 
-    // Draw route
+    // Draw route — red line with arrowheads for direction
     const points: [number, number][] = result.timeline
       .filter(t => t.lat && t.lng)
       .map(t => [t.lat!, t.lng!]);
 
     if (points.length >= 2) {
+      // Outer glow line (wider, semi-transparent red)
       L.polyline(points, {
-        color: '#10b981',
-        weight: 4,
-        opacity: 0.8
+        color: '#ef4444',
+        weight: 8,
+        opacity: 0.25,
       }).addTo(map);
+
+      // Main route line (solid red, dashed)
+      L.polyline(points, {
+        color: '#ef4444',
+        weight: 4,
+        opacity: 0.9,
+        dashArray: '8 6',
+      }).addTo(map);
+
+      // Draw directional arrows between consecutive points
+      for (let i = 0; i < points.length - 1; i++) {
+        const [lat1, lng1] = points[i];
+        const [lat2, lng2] = points[i + 1];
+        const midLat = (lat1 + lat2) / 2;
+        const midLng = (lng1 + lng2) / 2;
+        const angle = Math.atan2(lng2 - lng1, lat2 - lat1) * 180 / Math.PI;
+
+        const arrowIcon = L.divIcon({
+          html: `<div style="transform: rotate(${-angle}deg); color: #ef4444; font-size: 18px; font-weight: bold; text-shadow: 0 0 4px white, 0 0 4px white;">➤</div>`,
+          className: '',
+          iconSize: [20, 20],
+          iconAnchor: [10, 10],
+        });
+        L.marker([midLat, midLng], { icon: arrowIcon, interactive: false }).addTo(map);
+      }
     }
 
-    // Add markers
+    // Add markers with distinct styling per step
     result.timeline.forEach((t, i) => {
       if (!t.lat || !t.lng) return;
 
+      const isFirst = i === 0;
       const isLast = i === result.timeline.length - 1;
+      const bgColor = isFirst ? '#3b82f6' : isLast ? '#10b981' : '#ef4444';
+      const size = isFirst || isLast ? 36 : 30;
+      const label = isFirst ? '🏭' : isLast ? '♻' : `${i + 1}`;
+
       const icon = L.divIcon({
-        html: `<div style="width:${isLast ? 32 : 24}px;height:${isLast ? 32 : 24}px;background:${isLast ? '#10b981' : '#3b82f6'};border:3px solid white;border-radius:50%;box-shadow:0 2px 8px rgba(0,0,0,.3);display:flex;align-items:center;justify-content:center">
-          <span style="color:white;font-weight:bold;font-size:${isLast ? 12 : 10}px">${i + 1}</span>
+        html: `<div style="width:${size}px;height:${size}px;background:${bgColor};border:4px solid white;border-radius:50%;box-shadow:0 4px 12px rgba(0,0,0,.4),0 0 0 3px ${bgColor}40;display:flex;align-items:center;justify-content:center">
+          <span style="color:white;font-weight:bold;font-size:${isFirst || isLast ? 16 : 12}px">${label}</span>
         </div>`,
         className: '',
-        iconSize: [isLast ? 32 : 24, isLast ? 32 : 24],
-        iconAnchor: [isLast ? 16 : 12, isLast ? 16 : 12]
+        iconSize: [size, size],
+        iconAnchor: [size / 2, size / 2],
+        popupAnchor: [0, -size / 2],
       });
 
       L.marker([t.lat, t.lng], { icon })
         .addTo(map)
         .bindPopup(`
-          <div style="font-family:sans-serif">
-            <div style="font-weight:700;color:#111">${t.title}</div>
-            <div style="color:#666;font-size:12px;margin-top:2px">${t.location}</div>
-            <div style="color:#999;font-size:11px;margin-top:4px">${new Date(t.date).toLocaleDateString('es-CO', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</div>
+          <div style="font-family:sans-serif;min-width:180px">
+            <div style="font-weight:700;color:#111;font-size:14px">${t.title}</div>
+            <div style="color:#666;font-size:12px;margin-top:4px">📍 ${t.location}</div>
+            <div style="color:#999;font-size:11px;margin-top:4px">🕐 ${new Date(t.date).toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>
           </div>
         `);
     });
 
     if (points.length > 0) {
       try {
-        map.fitBounds(L.latLngBounds(points), { padding: [60, 60] });
+        map.fitBounds(L.latLngBounds(points), { padding: [80, 80] });
       } catch { /* */ }
     }
   }
@@ -441,11 +473,28 @@ export default function UCIDTrackingPage() {
 
             {/* Map */}
             <div className="bg-slate-900/60 border border-slate-800 rounded-2xl overflow-hidden">
-              <div className="px-4 py-3 border-b border-slate-800 flex items-center gap-2">
-                <MapPin className="w-4 h-4 text-emerald-400" />
-                <span className="text-white text-sm font-medium">Ruta del envase</span>
+              <div className="px-4 py-3 border-b border-slate-800 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <MapPin className="w-4 h-4 text-emerald-400" />
+                  <span className="text-white text-sm font-medium">Ruta del envase</span>
+                </div>
+                {/* Legend */}
+                <div className="flex items-center gap-3 text-xs">
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-3 h-3 rounded-full bg-blue-500 border-2 border-white inline-block" />
+                    <span className="text-slate-400">Origen</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-4 h-0.5 bg-red-500 inline-block" style={{ borderTop: '2px dashed #ef4444' }} />
+                    <span className="text-slate-400">Ruta</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-3 h-3 rounded-full bg-emerald-500 border-2 border-white inline-block" />
+                    <span className="text-slate-400">Reciclaje</span>
+                  </div>
+                </div>
               </div>
-              <div ref={mapRef} className="h-64 w-full" style={{ background: '#0f172a' }} />
+              <div ref={mapRef} className="h-80 w-full" style={{ background: '#0f172a' }} />
             </div>
 
             {/* Timeline */}

@@ -251,19 +251,47 @@ export default function CompanyMapPage() {
       return matchStatus && matchSearch;
     });
 
-    // Draw routes
+    // Draw routes — red lines with glow and directional arrows
     if (showRoutes) {
       filtered.forEach(container => {
         if (container.route_points.length >= 2) {
           const coords: [number, number][] = container.route_points.map(p => [p.lat, p.lng]);
-          const polyline = L.polyline(coords, {
-            color: container.status === 'recycled' ? '#10b981' : '#f59e0b',
-            weight: 3,
-            opacity: 0.7,
-            dashArray: container.status === 'recycled' ? '' : '10, 10'
-          }).addTo(map as unknown as Parameters<typeof L.polyline>[0]);
+          const routeColor = container.status === 'recycled' ? '#10b981' : '#ef4444';
 
+          // Outer glow line
+          const glowLine = L.polyline(coords, {
+            color: routeColor,
+            weight: 8,
+            opacity: 0.2,
+          }).addTo(map as unknown as Parameters<typeof L.polyline>[0]);
+          routesRef.current.push(glowLine);
+
+          // Main route line
+          const polyline = L.polyline(coords, {
+            color: routeColor,
+            weight: 4,
+            opacity: 0.9,
+            dashArray: '8 6',
+          }).addTo(map as unknown as Parameters<typeof L.polyline>[0]);
           routesRef.current.push(polyline);
+
+          // Directional arrows between consecutive points
+          for (let i = 0; i < coords.length - 1; i++) {
+            const [lat1, lng1] = coords[i];
+            const [lat2, lng2] = coords[i + 1];
+            const midLat = (lat1 + lat2) / 2;
+            const midLng = (lng1 + lng2) / 2;
+            const angle = Math.atan2(lng2 - lng1, lat2 - lat1) * 180 / Math.PI;
+
+            const arrowIcon = L.divIcon({
+              html: `<div style="transform: rotate(${-angle}deg); color: ${routeColor}; font-size: 16px; font-weight: bold; text-shadow: 0 0 4px white, 0 0 4px white;">➤</div>`,
+              className: '',
+              iconSize: [18, 18],
+              iconAnchor: [9, 9],
+            });
+            const arrowMarker = L.marker([midLat, midLng], { icon: arrowIcon, interactive: false }).addTo(map as unknown as Parameters<typeof L.marker>[0]);
+            routesRef.current.push(arrowMarker);
+          }
         }
       });
     }
