@@ -56,10 +56,23 @@ function loadLeaflet(): Promise<void> {
 }
 
 export default function UCIDTrackingPage() {
-  // Get code from URL query params manually
+  // Get code from URL: supports both ?track=CODE query param and /s/{short_code}/{hash} path
   const [code, setCode] = useState(() => {
     const params = new URLSearchParams(window.location.search);
-    return params.get('code') ?? '';
+    const trackParam = params.get('track');
+    if (trackParam) return trackParam;
+
+    // Check for /s/{short_code}/{hash} path pattern
+    const pathMatch = window.location.pathname.match(/^\/s\/([A-Z0-9]{8})\/([a-f0-9]+)/i);
+    if (pathMatch) return pathMatch[1];
+
+    return '';
+  });
+
+  // Track the hash from the URL for cryptographic verification
+  const [urlHash, setUrlHash] = useState<string | null>(() => {
+    const pathMatch = window.location.pathname.match(/^\/s\/([A-Z0-9]{8})\/([a-f0-9]+)/i);
+    return pathMatch ? pathMatch[2] : null;
   });
 
   const [query, setQuery] = useState(code);
@@ -102,7 +115,7 @@ export default function UCIDTrackingPage() {
           .from('ucids')
           .select(`
             *,
-            company:companies(name),
+            company:companies(name, lat, lng),
             batch:ucid_batches(batch_name)
           `)
           .eq('short_code', lookupCode)
@@ -113,7 +126,7 @@ export default function UCIDTrackingPage() {
           .from('ucids')
           .select(`
             *,
-            company:companies(name),
+            company:companies(name, lat, lng),
             batch:ucid_batches(batch_name)
           `)
           .eq('ucid_hash', q.toLowerCase())
@@ -126,6 +139,22 @@ export default function UCIDTrackingPage() {
         setLoading(false);
         return;
       }
+
+      // Verify hash from URL if present (cryptographic integrity check)
+      if (urlHash) {
+        const fullHash = ucidData.ucid_hash as string;
+        if (!fullHash.startsWith(urlHash.toLowerCase())) {
+          setError('El código de verificación no coincide con este UCID. El enlace podría ser inválido.');
+          setLoading(false);
+          return;
+        }
+      }
+
+      // Get company coordinates (fallback to Yumbo default if not set)
+      const companyInfo = ucidData.company as { name: string; lat: number | null; lng: number | null } | null;
+      const companyLat = companyInfo?.lat ?? 3.5915;
+      const companyLng = companyInfo?.lng ?? -76.4981;
+      const companyName = companyInfo?.name ?? 'Planta de producción';
 
       // Get scan event if available
       let scanEvent: Record<string, unknown> | null = null;
@@ -150,18 +179,18 @@ export default function UCIDTrackingPage() {
         description: `Código UCID creado${ucidData.batch ? ` · Lote: ${(ucidData.batch as { batch_name: string }).batch_name}` : ''}`,
         date: ucidData.created_at as string,
         location: {
-          lat: 3.5915, // Should be company HQ
-          lng: -76.4981,
-          name: (ucidData.company as { name: string })?.name ?? 'Planta de producción'
+          lat: companyLat,
+          lng: companyLng,
+          name: companyName
         },
         completed: true
       });
       timeline.push({
         date: ucidData.created_at as string,
         title: 'UCID Generado',
-        location: (ucidData.company as { name: string })?.name ?? 'Planta',
-        lat: 3.5915,
-        lng: -76.4981
+        location: companyName,
+        lat: companyLat,
+        lng: companyLng
       });
 
       // Step 2: In transit (printed)
@@ -241,7 +270,7 @@ export default function UCIDTrackingPage() {
           status: ucidData.status as string,
           created_at: ucidData.created_at as string,
           scanned_at: ucidData.scanned_at as string | null,
-          company_name: (ucidData.company as { name: string } | null)?.name ?? null,
+          company_name: companyInfo?.name ?? null,
           batch_name: (ucidData.batch as { batch_name: string } | null)?.batch_name ?? null,
         },
         steps,
@@ -266,7 +295,12 @@ export default function UCIDTrackingPage() {
       (leafletMap.current as { remove: () => void }).remove();
     }
 
-    const map = L.map(mapRef.current, { zoomControl: true }).setView([3.5915, -76.4981], 12);
+    // Center on the first timeline point (origin), or default
+    const firstPoint = result.timeline.find(t => t.lat && t.lng);
+    const centerLat = firstPoint?.lat ?? 3.5915;
+    const centerLng = firstPoint?.lng ?? -76.4981;
+
+    const map = L.map(mapRef.current, { zoomControl: true }).setView([centerLat, centerLng], 12);
     leafletMap.current = map;
 
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {

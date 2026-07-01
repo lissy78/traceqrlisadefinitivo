@@ -59,6 +59,7 @@ export default function CompanyMapPage() {
   const [search, setSearch] = useState('');
   const [showRoutes, setShowRoutes] = useState(true);
   const [stats, setStats] = useState({ total: 0, active: 0, recycled: 0, points: 0 });
+  const [companyCoords, setCompanyCoords] = useState<{ lat: number; lng: number; name: string }>({ lat: 3.5915, lng: -76.4981, name: 'Planta de producción' });
 
   const mapRef = useRef<HTMLDivElement>(null);
   const leafletMap = useRef<unknown>(null);
@@ -92,6 +93,18 @@ export default function CompanyMapPage() {
       .select('*')
       .eq('company_id', profile.company_id);
 
+    // Get company info for coordinates
+    const { data: companyInfo } = await supabase
+      .from('companies')
+      .select('name, lat, lng')
+      .eq('id', profile.company_id)
+      .maybeSingle();
+
+    const companyLat = companyInfo?.lat ?? 3.5915;
+    const companyLng = companyInfo?.lng ?? -76.4981;
+    const companyName = companyInfo?.name ?? 'Planta de producción';
+    setCompanyCoords({ lat: companyLat, lng: companyLng, name: companyName });
+
     // Get recycling locations for reference
     const { data: locations } = await supabase
       .from('recycling_locations')
@@ -111,9 +124,9 @@ export default function CompanyMapPage() {
       // Origin: Company location (from UCID generation)
       if (ucid?.created_at) {
         routePoints.push({
-          lat: 3.5915, // Default to Yumbo area - should be company HQ
-          lng: -76.4981,
-          name: 'Planta de producción',
+          lat: companyLat,
+          lng: companyLng,
+          name: companyName,
           date: ucid.created_at,
           type: 'origin'
         });
@@ -182,7 +195,7 @@ export default function CompanyMapPage() {
         product_name: ucid.product_name ?? 'Envase',
         brand: ucid.product_brand,
         status: 'generated',
-        origin: { lat: 3.5915, lng: -76.4981, name: 'Planta' },
+        origin: { lat: companyLat, lng: companyLng, name: companyName },
         destination: null,
         current: null,
         route_points: [],
@@ -207,7 +220,7 @@ export default function CompanyMapPage() {
     if (!L || !mapRef.current) return;
 
     if (!leafletMap.current) {
-      const map = L.map(mapRef.current, { zoomControl: true }).setView([3.5915, -76.4981], 12);
+      const map = L.map(mapRef.current, { zoomControl: true }).setView([companyCoords.lat, companyCoords.lng], 12);
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         attribution: '© OpenStreetMap contributors',
         maxZoom: 19,

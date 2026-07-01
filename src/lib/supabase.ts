@@ -33,6 +33,8 @@ export interface Company {
   created_by: string | null;
   created_at: string;
   updated_at: string;
+  lat: number | null;
+  lng: number | null;
 }
 
 export interface ProductCatalog {

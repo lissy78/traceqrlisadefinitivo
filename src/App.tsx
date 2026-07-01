@@ -24,9 +24,14 @@ import UCIDPrint from './pages/UCIDPrint';
 function AppContent() {
   const { user, profile, loading } = useAuth();
   const [view, setView] = useState<string>(() => {
-    // Check for public tracking page
+    // Check for public tracking page via query param
     const params = new URLSearchParams(window.location.search);
     if (params.get('track')) return 'public-tracking';
+
+    // Check for /s/{short_code}/{hash} URL pattern (QR code deep link)
+    const pathMatch = window.location.pathname.match(/^\/s\/([A-Z0-9]{8})\/([a-f0-9]+)/i);
+    if (pathMatch) return 'public-tracking';
+
     return 'dashboard';
   });
 
