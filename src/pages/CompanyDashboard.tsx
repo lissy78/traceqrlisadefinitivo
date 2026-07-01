@@ -5,7 +5,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, LineChart, L
 import {
   Package, TrendingUp, Recycle, BarChart2, MapPin,
   Activity, ShoppingBag, Calendar, Building2, Search,
-  Check, Loader2, Plus, Shield, AlertTriangle
+  Check, Loader2, Plus, Shield, AlertTriangle, AlertCircle
 } from 'lucide-react';
 
 const COLORS = ['#10b981', '#14b8a6', '#06b6d4', '#3b82f6', '#8b5cf6', '#f59e0b'];
@@ -252,8 +252,13 @@ function CompanySetup({ onLinked }: { onLinked: () => void }) {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    supabase.from('companies').select('*').order('name').then(({ data }) => setCompanies((data ?? []) as Company[]));
-  }, []);
+    // Only show approved companies (or companies created by this user that are pending)
+    supabase.from('companies')
+      .select('*')
+      .or(`is_approved.eq.true,created_by.eq.${profile?.id}`)
+      .order('name')
+      .then(({ data }) => setCompanies((data ?? []) as Company[]));
+  }, [profile?.id]);
 
   const filtered = companies.filter(c =>
     c.name.toLowerCase().includes(search.toLowerCase()) || c.email.toLowerCase().includes(search.toLowerCase())
@@ -262,7 +267,21 @@ function CompanySetup({ onLinked }: { onLinked: () => void }) {
   async function linkToExisting() {
     if (!selected || !profile) return;
     setSaving(true);
-    await supabase.from('profiles').update({ company_id: selected.id }).eq('id', profile.id);
+    setError('');
+
+    // Verify the company is approved or owned by user
+    if (!selected.is_approved && selected.created_by !== profile.id) {
+      setError('Solo puedes vincularte a empresas aprobadas por el administrador.');
+      setSaving(false);
+      return;
+    }
+
+    const { error: updateError } = await supabase.from('profiles').update({ company_id: selected.id }).eq('id', profile.id);
+    if (updateError) {
+      setError(updateError.message);
+      setSaving(false);
+      return;
+    }
     setSaving(false);
     onLinked();
   }
@@ -272,7 +291,7 @@ function CompanySetup({ onLinked }: { onLinked: () => void }) {
     setSaving(true);
     setError('');
     const { data, error: e } = await supabase.from('companies')
-      .insert({ name: form.name, email: form.email, industry: form.industry, description: form.description || null, created_by: profile.id })
+      .insert({ name: form.name, email: form.email, industry: form.industry, description: form.description || null, created_by: profile.id, is_approved: false })
       .select().maybeSingle();
     if (e) { setError(e.message); setSaving(false); return; }
     if (data) {
@@ -337,16 +356,27 @@ function CompanySetup({ onLinked }: { onLinked: () => void }) {
                         <Building2 className="w-4 h-4 text-teal-400" />
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-white text-sm font-medium">{c.name}</p>
+                        <p className="text-white text-sm font-medium">
+                          {c.name}
+                          {!c.is_approved && (
+                            <span className="ml-2 text-xs text-amber-400 font-normal">(pendiente)</span>
+                          )}
+                        </p>
                         <p className="text-slate-500 text-xs">{c.industry}</p>
                       </div>
                       {selected?.id === c.id && <Check className="w-4 h-4 text-emerald-400" />}
                     </button>
                   ))}
                   {filtered.length === 0 && (
-                    <p className="text-slate-500 text-sm text-center py-4">No se encontraron empresas</p>
+                    <p className="text-slate-500 text-sm text-center py-4">No se encontraron empresas aprobadas</p>
                   )}
                 </div>
+                {error && (
+                  <div className="flex items-center gap-2 bg-red-500/10 border border-red-500/20 text-red-400 rounded-xl px-4 py-3 text-sm">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    {error}
+                  </div>
+                )}
                 <button
                   onClick={linkToExisting}
                   disabled={!selected || saving}
@@ -385,8 +415,11 @@ function CompanySetup({ onLinked }: { onLinked: () => void }) {
                   className="w-full bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-white font-semibold py-2.5 rounded-xl transition-colors flex items-center justify-center gap-2"
                 >
                   {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                  {saving ? 'Creando empresa...' : 'Crear y vincular empresa'}
+                  {saving ? 'Creando empresa...' : 'Crear empresa (requiere aprobación)'}
                 </button>
+                <p className="text-slate-500 text-xs text-center">
+                  La empresa será creada pero necesitara aprobacion del administrador para acceder al dashboard.
+                </p>
               </div>
             )}
           </div>

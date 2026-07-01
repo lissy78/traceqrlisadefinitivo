@@ -27,11 +27,19 @@ const COLLECTION_POINTS = [
   'Otro',
 ];
 
-const SCAN_QUESTIONS = [
+const SCAN_QUESTIONS: Array<{
+  key: string;
+  label: string;
+  type: 'select' | 'text' | 'location';
+  options: string[];
+  showIf?: { key: string; value: string };
+}> = [
   { key: 'acquisition_source', label: '¿Dónde conseguiste este producto?', type: 'select', options: ACQUISITION_SOURCES },
   { key: 'brand_name', label: '¿Cuál es la marca del producto?', type: 'select', options: ['Coca-Cola', 'Colombiana', 'Postobón', 'Pepsi', 'Sprite', 'Fanta', 'Bavaria', 'Águila', 'Club Colombia', 'Cristal', 'Brisa', 'Manantial', 'Nestlé', 'Otro'] },
+  { key: 'other_brand', label: 'Especifica la marca', type: 'text', options: [], showIf: { key: 'brand_name', value: 'Otro' } },
   { key: 'industry_type', label: '¿A qué industria pertenece?', type: 'select', options: ['Bebidas', 'Alimentos', 'Farmacéutica / Droguería', 'Cosméticos / Belleza', 'Limpieza del hogar', 'Otro'] },
   { key: 'material_type', label: '¿Qué tipo de plástico es?', type: 'select', options: PLASTIC_TYPES },
+  { key: 'container_size', label: '¿Cuál es el tamaño del envase?', type: 'select', options: ['Pequeño (< 500ml)', 'Mediano (500ml - 1L)', 'Grande (> 1L)'] },
   { key: 'container_condition', label: '¿En qué estado está el envase?', type: 'select', options: ['Vacío', 'Parcialmente lleno', 'Lleno (sin abrir)'] },
   { key: 'collection_point', label: '¿En qué punto de acopio lo entregarás?', type: 'select', options: COLLECTION_POINTS },
   { key: 'location', label: 'Ubicación actual (GPS)', type: 'location', options: [] },
@@ -111,6 +119,8 @@ export default function ScannerPage() {
   const [offData, setOffData] = useState<Record<string, unknown> | null>(null);
   const [scanningFrame, setScanningFrame] = useState(false);
   const [geoStatus, setGeoStatus] = useState<'idle' | 'requesting' | 'granted' | 'error'>('idle');
+  const [locationWarning, setLocationWarning] = useState<string | null>(null);
+  const [userCoords, setUserCoords] = useState<{ lat: number; lng: number } | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -343,8 +353,21 @@ export default function ScannerPage() {
 
   async function handleSubmitAnswers() {
     if (!profile) return;
-    const unanswered = SCAN_QUESTIONS.filter(q => !answers[q.key] && !q.key.startsWith('_'));
+
+    // Check required questions including conditional ones
+    const unanswered = SCAN_QUESTIONS.filter(q => {
+      // Skip questions with showIf conditions not met
+      if (q.showIf && answers[q.showIf.key] !== q.showIf.value) return false;
+      return !answers[q.key] && !q.key.startsWith('_');
+    });
     if (unanswered.length > 0) { setError('Por favor responde todas las preguntas'); return; }
+
+    // If brand is "Otro", verify other_brand is filled
+    if (answers['brand_name'] === 'Otro' && !answers['other_brand']?.trim()) {
+      setError('Por favor especifica el nombre de la marca');
+      return;
+    }
+
     setLoading(true);
     setError('');
 
@@ -353,10 +376,11 @@ export default function ScannerPage() {
     const ucidHash = answers._ucid_hash as string | undefined;
 
     // Use brand_name answer to match company if not already matched
-    const brandAnswer = answers['brand_name'];
+    // If "Otro" was selected, use the custom brand
+    const brandAnswer = answers['brand_name'] === 'Otro' ? answers['other_brand'] : answers['brand_name'];
     let companyId = product?.company_id ?? matchedCompany?.id ?? null;
     let resolvedCompany = matchedCompany;
-    if (!companyId && brandAnswer && brandAnswer !== 'Otro') {
+    if (!companyId && brandAnswer) {
       resolvedCompany = await matchBrandToCompany(brandAnswer);
       companyId = resolvedCompany?.id ?? null;
       if (resolvedCompany) setMatchedCompany(resolvedCompany);
@@ -365,7 +389,7 @@ export default function ScannerPage() {
     // Update product brand/material from answers if not set
     if (product?.id) {
       const updates: Record<string, string | null> = {};
-      if (!product.brand && brandAnswer && brandAnswer !== 'Otro') updates.brand = brandAnswer;
+      if (!product.brand && brandAnswer) updates.brand = brandAnswer;
       if (answers['material_type']) {
         const mat = answers['material_type'].includes('PET') ? 'PET'
           : answers['material_type'].includes('Chuspa') ? 'Chuspa'
@@ -379,6 +403,12 @@ export default function ScannerPage() {
       }
     }
 
+    // Prepare scan data with all answers including custom brand
+    const scanData = {
+      ...answers,
+      resolved_brand: brandAnswer,
+    };
+
     const { error: scanErr } = await supabase.from('scan_events').insert({
       user_id: profile.id,
       barcode: scannedCode,
@@ -388,7 +418,9 @@ export default function ScannerPage() {
       token_hash: token,
       product_id: product?.id || null,
       company_id: companyId,
-      scan_data: answers,
+      scan_data: scanData,
+      location_lat: userCoords?.lat ?? null,
+      location_lng: userCoords?.lng ?? null,
     });
 
     if (scanErr) {
@@ -400,6 +432,10 @@ export default function ScannerPage() {
       setLoading(false);
       return;
     }
+
+    // Update user total points
+    const newTotal = (profile.total_points ?? 0) + 10;
+    await supabase.from('profiles').update({ total_points: newTotal }).eq('id', profile.id);
 
     // If this was a UCID scan, mark the UCID as scanned
     if (ucidId) {
@@ -418,6 +454,9 @@ export default function ScannerPage() {
     }
 
     for (const [key, val] of Object.entries(answers)) {
+      // Skip internal keys and empty values
+      if (key.startsWith('_') || !val || val === 'Otro') continue;
+
       const { data: existing } = await supabase
         .from('ai_product_responses')
         .select('*')
@@ -454,18 +493,46 @@ export default function ScannerPage() {
     setStep('result');
   }
 
-  function requestGeolocation() {
+  async function requestGeolocation() {
     if (!navigator.geolocation) {
       setAnswers(prev => ({ ...prev, location: 'Geolocalización no disponible' }));
       return;
     }
     setGeoStatus('requesting');
+    setLocationWarning(null);
+
     navigator.geolocation.getCurrentPosition(
-      pos => {
+      async pos => {
         const { latitude, longitude, accuracy } = pos.coords;
+        setUserCoords({ lat: latitude, lng: longitude });
         const locStr = `${latitude.toFixed(6)}, ${longitude.toFixed(6)} (±${Math.round(accuracy)}m)`;
         setAnswers(prev => ({ ...prev, location: locStr }));
         setGeoStatus('granted');
+
+        // Validate against collection points
+        if (accuracy > 100) {
+          setLocationWarning('La precisión GPS es baja. Acerca más al punto de acopio para mejor verificación.');
+        } else {
+          // Check if user is near a collection point
+          const { data: locations } = await supabase
+            .from('recycling_locations')
+            .select('name, lat, lng')
+            .eq('is_active', true);
+
+          if (locations && locations.length > 0) {
+            const nearPoint = locations.find(loc => {
+              const dist = Math.sqrt(
+                Math.pow((loc.lat - latitude) * 111000, 2) +
+                Math.pow((loc.lng - longitude) * 111000 * Math.cos(latitude * Math.PI / 180), 2)
+              );
+              return dist < 200; // Within 200 meters
+            });
+
+            if (!nearPoint) {
+              setLocationWarning('No estás cerca de un punto de acopio registrado. Tu ubicación será guardada para verificación.');
+            }
+          }
+        }
       },
       () => {
         setGeoStatus('error');
@@ -487,6 +554,8 @@ export default function ScannerPage() {
     setError('');
     setCameraStatus('idle');
     setGeoStatus('idle');
+    setLocationWarning(null);
+    setUserCoords(null);
   }
 
   return (
@@ -653,61 +722,90 @@ export default function ScannerPage() {
 
           <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-5 space-y-5">
             <h2 className="text-white font-semibold">Cuéntanos más</h2>
-            {SCAN_QUESTIONS.map(q => (
-              <div key={q.key}>
-                <label className="block text-sm font-medium text-slate-300 mb-2">{q.label}</label>
+            {SCAN_QUESTIONS.map(q => {
+              // Skip if showIf condition is not met
+              if (q.showIf && answers[q.showIf.key] !== q.showIf.value) return null;
 
-                {q.type === 'location' ? (
-                  <div className="space-y-2">
-                    <button
-                      type="button"
-                      onClick={requestGeolocation}
-                      disabled={geoStatus === 'requesting'}
-                      className="w-full flex items-center justify-center gap-2 bg-blue-500/15 border border-blue-500/30 hover:bg-blue-500/25 disabled:opacity-60 text-blue-300 rounded-xl px-4 py-3 text-sm font-medium transition-colors"
-                    >
-                      {geoStatus === 'requesting' ? (
-                        <><Loader2 className="w-4 h-4 animate-spin" /> Obteniendo ubicación...</>
-                      ) : geoStatus === 'granted' ? (
-                        <><CheckCircle2 className="w-4 h-4 text-emerald-400" /> <span className="text-emerald-300">Ubicación capturada</span></>
-                      ) : geoStatus === 'error' ? (
-                        <><AlertCircle className="w-4 h-4 text-amber-400" /> Reintentar ubicación</>
-                      ) : (
-                        <><Navigation className="w-4 h-4" /> Capturar ubicación en tiempo real</>
+              return (
+                <div key={q.key}>
+                  <label className="block text-sm font-medium text-slate-300 mb-2">{q.label}</label>
+
+                  {q.type === 'location' ? (
+                    <div className="space-y-2">
+                      <button
+                        type="button"
+                        onClick={requestGeolocation}
+                        disabled={geoStatus === 'requesting'}
+                        className="w-full flex items-center justify-center gap-2 bg-blue-500/15 border border-blue-500/30 hover:bg-blue-500/25 disabled:opacity-60 text-blue-300 rounded-xl px-4 py-3 text-sm font-medium transition-colors"
+                      >
+                        {geoStatus === 'requesting' ? (
+                          <><Loader2 className="w-4 h-4 animate-spin" /> Obteniendo ubicación...</>
+                        ) : geoStatus === 'granted' ? (
+                          <><CheckCircle2 className="w-4 h-4 text-emerald-400" /> <span className="text-emerald-300">Ubicación capturada</span></>
+                        ) : geoStatus === 'error' ? (
+                          <><AlertCircle className="w-4 h-4 text-amber-400" /> Reintentar ubicación</>
+                        ) : (
+                          <><Navigation className="w-4 h-4" /> Capturar ubicación en tiempo real</>
+                        )}
+                      </button>
+                      {answers['location'] && geoStatus === 'granted' && (
+                        <div className="flex items-start gap-2 bg-emerald-500/10 border border-emerald-500/20 rounded-xl px-3 py-2">
+                          <MapPin className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
+                          <span className="text-emerald-300 text-xs font-mono break-all">{answers['location']}</span>
+                        </div>
                       )}
-                    </button>
-                    {answers['location'] && geoStatus === 'granted' && (
-                      <div className="flex items-start gap-2 bg-emerald-500/10 border border-emerald-500/20 rounded-xl px-3 py-2">
-                        <MapPin className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
-                        <span className="text-emerald-300 text-xs font-mono break-all">{answers['location']}</span>
-                      </div>
-                    )}
-                    {geoStatus === 'error' && (
-                      <p className="text-xs text-amber-400 flex items-center gap-1">
-                        <AlertCircle className="w-3 h-3" /> Permiso denegado. La ubicación se guardará como no disponible.
-                      </p>
-                    )}
-                  </div>
-                ) : (
-                  <div className="relative">
-                    <select
+                      {locationWarning && (
+                        <div className="flex items-start gap-2 bg-amber-500/10 border border-amber-500/20 rounded-xl px-3 py-2">
+                          <AlertCircle className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+                          <span className="text-amber-300 text-xs">{locationWarning}</span>
+                        </div>
+                      )}
+                      {geoStatus === 'error' && (
+                        <p className="text-xs text-amber-400 flex items-center gap-1">
+                          <AlertCircle className="w-3 h-3" /> Permiso denegado. La ubicación se guardará como no disponible.
+                        </p>
+                      )}
+                    </div>
+                  ) : q.type === 'text' ? (
+                    <input
+                      type="text"
                       value={answers[q.key] ?? ''}
                       onChange={e => setAnswers(prev => ({ ...prev, [q.key]: e.target.value }))}
-                      className="w-full bg-slate-800 border border-slate-700 text-white rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-emerald-500 appearance-none transition-colors"
-                    >
-                      <option value="">Selecciona una opción</option>
-                      {q.options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
-                    </select>
-                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
-                  </div>
-                )}
+                      placeholder="Escribe el nombre de la marca"
+                      className="w-full bg-slate-800 border border-slate-700 text-white placeholder-slate-500 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-emerald-500 transition-colors"
+                    />
+                  ) : (
+                    <div className="relative">
+                      <select
+                        value={answers[q.key] ?? ''}
+                        onChange={e => setAnswers(prev => ({ ...prev, [q.key]: e.target.value }))}
+                        className="w-full bg-slate-800 border border-slate-700 text-white rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-emerald-500 appearance-none transition-colors"
+                      >
+                        <option value="">Selecciona una opción</option>
+                        {q.options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                      </select>
+                      <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+                    </div>
+                  )}
 
-                {answers[q.key] && q.type !== 'location' && (
-                  <p className="text-xs text-emerald-400 mt-1 flex items-center gap-1">
-                    <CheckCircle2 className="w-3 h-3" /> Aprendido por IA
-                  </p>
-                )}
-              </div>
-            ))}
+                  {/* Brand validation warning */}
+                  {q.key === 'brand_name' && product?.brand && answers['brand_name'] && answers['brand_name'] !== 'Otro' && !answers['brand_name'].toLowerCase().includes(product.brand.toLowerCase()) && !product.brand.toLowerCase().includes(answers['brand_name'].toLowerCase()) && (
+                    <div className="flex items-start gap-2 bg-amber-500/10 border border-amber-500/20 rounded-xl px-3 py-2 mt-2">
+                      <AlertCircle className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+                      <span className="text-amber-300 text-xs">
+                        El código indica marca <strong>{product.brand}</strong>. Verifica que seleccionaste la correcta.
+                      </span>
+                    </div>
+                  )}
+
+                  {answers[q.key] && q.type !== 'location' && q.type !== 'text' && (
+                    <p className="text-xs text-emerald-400 mt-1 flex items-center gap-1">
+                      <CheckCircle2 className="w-3 h-3" /> Aprendido por IA
+                    </p>
+                  )}
+                </div>
+              );
+            })}
           </div>
 
           {error && <ErrorBanner msg={error} />}
