@@ -75,6 +75,20 @@ async function matchBrandToCompany(brand: string | null): Promise<{ id: string; 
 }
 
 // Detect if code is a TraceQR UCID (QR from our platform)
+// Compare brand names flexibly (case-insensitive, accent-insensitive, trimmed)
+function brandsMatch(selected: string, expected: string): boolean {
+  const normalize = (s: string) =>
+    s.trim().toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9\s]/g, '')
+      .replace(/\s+/g, ' ');
+  const a = normalize(selected);
+  const b = normalize(expected);
+  if (!a || !b) return false;
+  return a === b || a.includes(b) || b.includes(a);
+}
+
 function isTraceQRUCID(code: string): { isUCID: boolean; shortCode?: string; ucidHash?: string } {
   // Pattern 1: Full URL like traceqr.app/s/SHORTCODE/HASHPART
   const urlMatch = code.match(/traceqr\.app\/s\/([A-Z0-9]{8})\/([a-f0-9]+)/i);
@@ -253,133 +267,66 @@ export default function ScannerPage() {
     setError('');
     setMatchedCompany(null);
 
-    // Check if this is a TraceQR UCID (unique container identifier)
+    // Only accept TraceQR UCIDs - reject any other code type
     const ucidCheck = isTraceQRUCID(code);
-    if (ucidCheck.isUCID) {
-      // This is a UCID - validate it (lookup by short_code or full hash)
-      const validation = await lookupAndValidateUCID(ucidCheck.shortCode, ucidCheck.ucidHash);
-
-      if (!validation.valid) {
-        setError(validation.error || 'UCID invalido');
-        setLoading(false);
-        return;
-      }
-
-      // UCID is valid - get company info
-      const ucidData = validation.data as Record<string, unknown>;
-      const companyData = ucidData.company_id ? await supabase
-        .from('companies')
-        .select('id, name')
-        .eq('id', ucidData.company_id as string)
-        .maybeSingle() : null;
-
-      if (companyData?.data) {
-        setMatchedCompany({ id: companyData.data.id, name: companyData.data.name });
-      }
-
-      // Set product info from UCID
-      const ucidProduct: ProductCatalog = {
-        id: '',
-        barcode: ucidHash.slice(0, 24),
-        name: (ucidData.product_name as string) || `UCID: ${ucidData.short_code}`,
-        brand: (ucidData.product_brand as string) || null,
-        category: null,
-        company_id: (ucidData.company_id as string) || null,
-        image_url: null,
-        description: null,
-        material: (ucidData.container_type as string) || 'PET',
-        weight_grams: null,
-        off_data: { ucid_hash: ucidHash, short_code: ucidData.short_code, validated: true },
-        ai_confidence: 1,
-        scan_count: 1,
-        created_at: '',
-        updated_at: '',
-      };
-      setProduct(ucidProduct);
-
-      // Store UCID hash for later use
-      setAnswers(prev => ({ ...prev, _ucid_id: ucidData.ucid_id as string, _ucid_hash: ucidHash }));
+    if (!ucidCheck.isUCID) {
+      setError('Codigo no valido. Solo se aceptan QR generados por TraceQR (UCID). Los codigos de barras externos no estan permitidos.');
       setLoading(false);
-      setStep('questions');
-      // Auto-request geolocation immediately
-      requestGeolocation();
       return;
     }
 
-    // Standard barcode flow
-    const { data: existing } = await supabase
-      .from('product_catalog')
-      .select('*')
-      .eq('barcode', code)
-      .maybeSingle();
+    // Validate the UCID against the database
+    const validation = await lookupAndValidateUCID(ucidCheck.shortCode, ucidCheck.ucidHash);
 
-    if (existing) {
-      const prod = existing as ProductCatalog;
-      setProduct(prod);
-
-      // Match company from brand if not already linked
-      const company = await matchBrandToCompany(prod.brand);
-      setMatchedCompany(company);
-
-      // If product has no company but we found one, update it
-      if (!prod.company_id && company) {
-        await supabase.from('product_catalog')
-          .update({ company_id: company.id })
-          .eq('id', prod.id);
-        setProduct({ ...prod, company_id: company.id });
-      }
-
-      const { data: aiData } = await supabase
-        .from('ai_product_responses')
-        .select('*')
-        .eq('barcode', code);
-      const preAnswers: Record<string, string> = {};
-      (aiData ?? []).forEach((r: { question_key: string; answer: string }) => {
-        preAnswers[r.question_key] = r.answer;
-      });
-      setAnswers(preAnswers);
-    } else {
-      const off = await fetchOpenFoodFacts(code);
-      if (off) {
-        setOffData(off as Record<string, unknown>);
-        const brand = (off.brands as string) || null;
-
-        // Match brand to company
-        const company = await matchBrandToCompany(brand);
-        setMatchedCompany(company);
-
-        const newProduct: Omit<ProductCatalog, 'id' | 'created_at' | 'updated_at'> = {
-          barcode: code,
-          name: (off.product_name as string) || code,
-          brand,
-          category: (off.categories as string)?.split(',')[0]?.trim() || null,
-          company_id: company?.id ?? null,
-          image_url: (off.image_url as string) || null,
-          description: null,
-          material: 'PET',
-          weight_grams: null,
-          off_data: off as Record<string, unknown>,
-          ai_confidence: 0.7,
-          scan_count: 1,
-        };
-        const { data: inserted } = await supabase
-          .from('product_catalog')
-          .insert(newProduct)
-          .select()
-          .maybeSingle();
-        setProduct((inserted ?? { id: '', ...newProduct, created_at: '', updated_at: '' }) as ProductCatalog);
-      } else {
-        setProduct({
-          id: '', barcode: code, name: `Código: ${code}`, brand: null, category: null,
-          company_id: null, image_url: null, description: null, material: 'PET',
-          weight_grams: null, off_data: null, ai_confidence: 0, scan_count: 1,
-          created_at: '', updated_at: '',
-        });
-      }
+    if (!validation.valid) {
+      setError(validation.error || 'UCID invalido');
+      setLoading(false);
+      return;
     }
+
+    // UCID is valid - get company info
+    const ucidData = validation.data as Record<string, unknown>;
+    const ucidHash = (ucidData.ucid_hash as string) || ucidCheck.ucidHash || '';
+    const companyData = ucidData.company_id ? await supabase
+      .from('companies')
+      .select('id, name')
+      .eq('id', ucidData.company_id as string)
+      .maybeSingle() : null;
+
+    if (companyData?.data) {
+      setMatchedCompany({ id: companyData.data.id, name: companyData.data.name });
+    }
+
+    // Set product info from UCID
+    const ucidProduct: ProductCatalog = {
+      id: '',
+      barcode: ucidHash.slice(0, 24),
+      name: (ucidData.product_name as string) || `UCID: ${ucidData.short_code}`,
+      brand: (ucidData.product_brand as string) || null,
+      category: null,
+      company_id: (ucidData.company_id as string) || null,
+      image_url: null,
+      description: null,
+      material: (ucidData.container_type as string) || 'PET',
+      weight_grams: null,
+      off_data: { ucid_hash: ucidHash, short_code: ucidData.short_code, validated: true },
+      ai_confidence: 1,
+      scan_count: 1,
+      created_at: '',
+      updated_at: '',
+    };
+    setProduct(ucidProduct);
+
+    // Store UCID data for later use
+    setAnswers(prev => ({
+      ...prev,
+      _ucid_id: ucidData.ucid_id as string,
+      _ucid_hash: ucidHash,
+      _ucid_brand: (ucidData.product_brand as string) || '',
+      _ucid_company_id: (ucidData.company_id as string) || '',
+    }));
     setLoading(false);
     setStep('questions');
-    // Auto-request geolocation immediately
     requestGeolocation();
   }, []);
 
@@ -398,6 +345,18 @@ export default function ScannerPage() {
     if (answers['brand_name'] === 'Otro' && !answers['other_brand']?.trim()) {
       setError('Por favor especifica el nombre de la marca');
       return;
+    }
+
+    // Validate brand against UCID: the selected brand must match the UCID's product_brand
+    const ucidBrand = answers._ucid_brand as string | undefined;
+    if (ucidBrand) {
+      const selectedBrand = answers['brand_name'] === 'Otro'
+        ? answers['other_brand']?.trim()
+        : answers['brand_name'];
+      if (selectedBrand && !brandsMatch(selectedBrand, ucidBrand)) {
+        setError(`La marca "${selectedBrand}" no coincide con la marca registrada en el UCID ("${ucidBrand}"). Verifica el envase e intenta de nuevo.`);
+        return;
+      }
     }
     // If industry is "Otro", verify other_industry is filled
     if (answers['industry_type'] === 'Otro' && !answers['other_industry']?.trim()) {
