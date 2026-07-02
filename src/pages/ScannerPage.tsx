@@ -8,6 +8,7 @@ import {
   RefreshCw, AlertCircle, Upload, ImageIcon, Building2,
   MapPin, Navigation, ImageOff, FileImage, ShieldCheck, ShieldAlert
 } from 'lucide-react';
+import Tesseract from 'tesseract.js';
 
 type Step = 'scan' | 'questions' | 'result';
 
@@ -655,7 +656,6 @@ export default function ScannerPage() {
 
           // Run OCR to extract text using dynamic import
           try {
-            const Tesseract = await import('tesseract.js');
             const result = await Tesseract.recognize(dataUrl, 'spa+eng', {
               logger: (m) => {
                 if (m.status === 'recognizing text') {
