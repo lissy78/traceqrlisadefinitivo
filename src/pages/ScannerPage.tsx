@@ -2,11 +2,12 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { useAuth } from '../lib/auth';
 import { supabase, ProductCatalog } from '../lib/supabase';
 import { generateScanToken, fetchOpenFoodFacts, ACQUISITION_SOURCES } from '../lib/utils';
+import Tesseract from 'tesseract.js';
 import {
   QrCode, Barcode, Camera, CheckCircle2, XCircle,
   Loader2, Package, Star, Hash, ChevronDown,
   RefreshCw, AlertCircle, Upload, ImageIcon, Building2,
-  MapPin, Navigation, ImageOff, FileImage
+  MapPin, Navigation, ImageOff, FileImage, ShieldCheck, ShieldAlert
 } from 'lucide-react';
 
 type Step = 'scan' | 'questions' | 'result';
@@ -146,6 +147,8 @@ export default function ScannerPage() {
   const [verificationPhoto, setVerificationPhoto] = useState<string | null>(null);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [photoVerified, setPhotoVerified] = useState<'pending' | 'verified' | 'mismatch' | null>(null);
+  const [extractedData, setExtractedData] = useState<{ brands: string[]; sizes: string[]; rawText: string } | null>(null);
+  const [ocrProgress, setOcrProgress] = useState(0);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -619,6 +622,8 @@ export default function ScannerPage() {
     setVerificationPhoto(null);
     setUploadingPhoto(false);
     setPhotoVerified(null);
+    setExtractedData(null);
+    setOcrProgress(0);
   }
 
   async function handleVerificationPhoto(e: React.ChangeEvent<HTMLInputElement>) {
@@ -627,6 +632,8 @@ export default function ScannerPage() {
 
     setUploadingPhoto(true);
     setPhotoVerified('pending');
+    setExtractedData(null);
+    setOcrProgress(0);
 
     try {
       // Resize and convert to base64
@@ -646,6 +653,58 @@ export default function ScannerPage() {
           ctx?.drawImage(img, 0, 0, canvas.width, canvas.height);
           const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
           setVerificationPhoto(dataUrl);
+
+          // Run OCR to extract text
+          try {
+            const result = await Tesseract.recognize(dataUrl, 'spa+eng', {
+              logger: (m) => {
+                if (m.status === 'recognizing text') {
+                  setOcrProgress(Math.round(m.progress * 100));
+                }
+              },
+            });
+
+            const rawText = result.data.text;
+            console.log('OCR extracted text:', rawText);
+
+            // Extract brand names from known brands
+            const knownBrands = ['Coca-Cola', 'Colombiana', 'Postobón', 'Pepsi', 'Sprite', 'Fanta', 'Bavaria', 'Águila', 'Club Colombia', 'Cristal', 'Brisa', 'Manantial', 'Nestlé', 'Maní', 'Pony Malta', 'Cola y Pola', 'Levapan', 'Alpina', 'Alquería', 'Hit', 'Juice'];
+            const foundBrands: string[] = [];
+
+            const textUpper = rawText.toUpperCase();
+            knownBrands.forEach(brand => {
+              if (textUpper.includes(brand.toUpperCase()) || rawText.toLowerCase().includes(brand.toLowerCase())) {
+                foundBrands.push(brand);
+              }
+            });
+
+            // Extract sizes (ml, L)
+            const sizePattern = /(\d+)\s*(ml|ML|Ml|mL|L|l|litros?|litro)/gi;
+            const foundSizes: string[] = [];
+            let match;
+            while ((match = sizePattern.exec(rawText)) !== null) {
+              foundSizes.push(match[0].replace(/\s+/g, '').toLowerCase());
+            }
+
+            // Deduplicate sizes
+            const uniqueSizes = [...new Set(foundSizes)];
+
+            setExtractedData({
+              brands: foundBrands,
+              sizes: uniqueSizes,
+              rawText: rawText.substring(0, 500),
+            });
+
+            // Store extracted data for validation
+            setAnswers(prev => ({
+              ...prev,
+              _ocr_brands: foundBrands.join(','),
+              _ocr_sizes: uniqueSizes.join(','),
+            }));
+
+          } catch (ocrErr) {
+            console.error('OCR error:', ocrErr);
+          }
 
           // Upload to Supabase storage for verification
           const fileName = `scan_verification/${profile?.id}_${Date.now()}.jpg`;
@@ -678,6 +737,56 @@ export default function ScannerPage() {
 
     setUploadingPhoto(false);
     e.target.value = '';
+  }
+
+  // Function to validate user answers against OCR data
+  function validateAgainstOCR(): { valid: boolean; warnings: string[] } {
+    const warnings: string[] = [];
+
+    if (!extractedData) return { valid: true, warnings };
+
+    const selectedBrand = answers['brand_name'] === 'Otro' ? answers['other_brand'] : answers['brand_name'];
+
+    // Check brand match
+    if (selectedBrand && extractedData.brands.length > 0) {
+      const brandMatch = extractedData.brands.some(
+        b => b.toLowerCase() === selectedBrand.toLowerCase() ||
+             b.toLowerCase().includes(selectedBrand.toLowerCase()) ||
+             selectedBrand.toLowerCase().includes(b.toLowerCase())
+      );
+      if (!brandMatch) {
+        warnings.push(`La foto muestra "${extractedData.brands.join(', ')}" pero seleccionaste "${selectedBrand}"`);
+      }
+    }
+
+    // Check size match
+    const selectedSize = answers['container_size'];
+    if (selectedSize && extractedData.sizes.length > 0) {
+      const normalizeSize = (s: string) => {
+        const num = parseInt(s.replace(/\D/g, ''));
+        if (s.toLowerCase().includes('l') && !s.toLowerCase().includes('ml')) {
+          return num * 1000; // Convert L to ml
+        }
+        return num;
+      };
+
+      const ocrMl = extractedData.sizes.map(normalizeSize);
+      const selectedMl = selectedSize.includes('Pequeño') ? 400 :
+                        selectedSize.includes('Mediano') ? 750 :
+                        selectedSize.includes('Grande') ? 1500 : 0;
+
+      const sizeMatch = ocrMl.some((ml: number) => {
+        if (selectedMl === 0) return true;
+        // Allow 20% tolerance
+        return Math.abs(ml - selectedMl) < selectedMl * 0.3;
+      });
+
+      if (!sizeMatch && ocrMl.length > 0) {
+        warnings.push(`La foto muestra ${extractedData.sizes.join(' o ')} pero seleccionaste "${selectedSize}"`);
+      }
+    }
+
+    return { valid: warnings.length === 0, warnings };
   }
 
   // Decode base64 to Uint8Array for storage upload
@@ -910,14 +1019,75 @@ export default function ScannerPage() {
                 className="hidden"
               />
               {verificationPhoto ? (
-                <div className="relative">
-                  <img src={verificationPhoto} alt="Foto de verificación" className="w-full h-40 object-cover rounded-lg bg-slate-800" />
-                  <button
-                    onClick={() => { setVerificationPhoto(null); setPhotoVerified(null); }}
-                    className="absolute top-2 right-2 bg-slate-900/80 hover:bg-red-500/80 text-white p-1.5 rounded-lg transition-colors"
-                  >
-                    <XCircle className="w-4 h-4" />
-                  </button>
+                <div className="space-y-3">
+                  <div className="relative">
+                    <img src={verificationPhoto} alt="Foto de verificación" className="w-full h-40 object-cover rounded-lg bg-slate-800" />
+                    <button
+                      onClick={() => { setVerificationPhoto(null); setPhotoVerified(null); setExtractedData(null); }}
+                      className="absolute top-2 right-2 bg-slate-900/80 hover:bg-red-500/80 text-white p-1.5 rounded-lg transition-colors"
+                    >
+                      <XCircle className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  {/* OCR Progress */}
+                  {uploadingPhoto && ocrProgress > 0 && ocrProgress < 100 && (
+                    <div className="flex items-center gap-2 text-violet-300 text-xs">
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                      Analizando imagen... {ocrProgress}%
+                    </div>
+                  )}
+
+                  {/* OCR Results */}
+                  {extractedData && !uploadingPhoto && (
+                    <div className="bg-violet-500/10 border border-violet-500/20 rounded-lg p-3 space-y-2">
+                      <div className="flex items-center gap-2 text-violet-300 text-xs font-medium">
+                        <ShieldCheck className="w-3.5 h-3.5" />
+                        Datos detectados en la imagen
+                      </div>
+                      {extractedData.brands.length > 0 && (
+                        <div className="text-slate-300 text-xs">
+                          Marcas: <span className="text-emerald-400 font-medium">{extractedData.brands.join(', ')}</span>
+                        </div>
+                      )}
+                      {extractedData.sizes.length > 0 && (
+                        <div className="text-slate-300 text-xs">
+                          Tamaños: <span className="text-emerald-400 font-medium">{extractedData.sizes.join(', ')}</span>
+                        </div>
+                      )}
+                      {extractedData.brands.length === 0 && extractedData.sizes.length === 0 && (
+                        <div className="text-amber-400 text-xs">
+                          No se detectaron marcas ni tamaños claros
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Validation warnings */}
+                  {extractedData && answers['brand_name'] && !uploadingPhoto && (() => {
+                    const validation = validateAgainstOCR();
+                    if (validation.warnings.length > 0) {
+                      return (
+                        <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 space-y-1">
+                          <div className="flex items-center gap-2 text-red-400 text-xs font-medium">
+                            <ShieldAlert className="w-3.5 h-3.5" />
+                            Advertencia de validación
+                          </div>
+                          {validation.warnings.map((w, i) => (
+                            <p key={i} className="text-red-300 text-xs">{w}</p>
+                          ))}
+                        </div>
+                      );
+                    }
+                    return (
+                      <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-3">
+                        <div className="flex items-center gap-2 text-emerald-400 text-xs">
+                          <ShieldCheck className="w-3.5 h-3.5" />
+                          Datos verificados correctamente
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
               ) : (
                 <button
@@ -926,7 +1096,7 @@ export default function ScannerPage() {
                   className="w-full flex items-center justify-center gap-2 bg-violet-500/10 border border-violet-500/25 hover:bg-violet-500/20 disabled:opacity-50 text-violet-300 rounded-xl py-3 text-sm font-medium transition-colors"
                 >
                   {uploadingPhoto ? (
-                    <><Loader2 className="w-4 h-4 animate-spin" /> Subiendo...</>
+                    <><Loader2 className="w-4 h-4 animate-spin" /> Analizando imagen...</>
                   ) : (
                     <><Camera className="w-4 h-4" /> Tomar foto del envase</>
                   )}
