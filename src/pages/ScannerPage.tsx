@@ -2,7 +2,6 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { useAuth } from '../lib/auth';
 import { supabase, ProductCatalog } from '../lib/supabase';
 import { generateScanToken, fetchOpenFoodFacts, ACQUISITION_SOURCES } from '../lib/utils';
-import Tesseract from 'tesseract.js';
 import {
   QrCode, Barcode, Camera, CheckCircle2, XCircle,
   Loader2, Package, Star, Hash, ChevronDown,
@@ -654,8 +653,9 @@ export default function ScannerPage() {
           const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
           setVerificationPhoto(dataUrl);
 
-          // Run OCR to extract text
+          // Run OCR to extract text using dynamic import
           try {
+            const Tesseract = await import('tesseract.js');
             const result = await Tesseract.recognize(dataUrl, 'spa+eng', {
               logger: (m) => {
                 if (m.status === 'recognizing text') {
