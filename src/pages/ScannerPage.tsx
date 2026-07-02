@@ -6,7 +6,7 @@ import {
   QrCode, Barcode, Camera, CheckCircle2, XCircle,
   Loader2, Package, Star, Hash, ChevronDown,
   RefreshCw, AlertCircle, Upload, ImageIcon, Building2,
-  MapPin, Navigation
+  MapPin, Navigation, ImageOff, FileImage
 } from 'lucide-react';
 
 type Step = 'scan' | 'questions' | 'result';
@@ -143,11 +143,15 @@ export default function ScannerPage() {
   const [geoStatus, setGeoStatus] = useState<'idle' | 'requesting' | 'granted' | 'error'>('idle');
   const [locationWarning, setLocationWarning] = useState<string | null>(null);
   const [userCoords, setUserCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [verificationPhoto, setVerificationPhoto] = useState<string | null>(null);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [photoVerified, setPhotoVerified] = useState<'pending' | 'verified' | 'mismatch' | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const animFrameRef = useRef<number>(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const photoInputRef = useRef<HTMLInputElement>(null);
 
   const hasBarcodeDetector = typeof window !== 'undefined' && 'BarcodeDetector' in window;
 
@@ -461,6 +465,7 @@ export default function ScannerPage() {
       scan_data: scanData,
       location_lat: userCoords?.lat ?? null,
       location_lng: userCoords?.lng ?? null,
+      verification_photo_url: answers['_verification_photo_url'] || null,
     });
 
     if (scanErr) {
@@ -611,6 +616,78 @@ export default function ScannerPage() {
     setGeoStatus('idle');
     setLocationWarning(null);
     setUserCoords(null);
+    setVerificationPhoto(null);
+    setUploadingPhoto(false);
+    setPhotoVerified(null);
+  }
+
+  async function handleVerificationPhoto(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploadingPhoto(true);
+    setPhotoVerified('pending');
+
+    try {
+      // Resize and convert to base64
+      const img = new Image();
+      const reader = new FileReader();
+
+      reader.onload = async (ev) => {
+        img.src = ev.target?.result as string;
+        img.onload = async () => {
+          // Resize to max 800px
+          const canvas = document.createElement('canvas');
+          const maxDim = 800;
+          const scale = Math.min(maxDim / img.width, maxDim / img.height);
+          canvas.width = img.width * scale;
+          canvas.height = img.height * scale;
+          const ctx = canvas.getContext('2d');
+          ctx?.drawImage(img, 0, 0, canvas.width, canvas.height);
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
+          setVerificationPhoto(dataUrl);
+
+          // Upload to Supabase storage for verification
+          const fileName = `scan_verification/${profile?.id}_${Date.now()}.jpg`;
+          const base64Data = dataUrl.split(',')[1];
+
+          const { error: uploadError } = await supabase.storage
+            .from('scan-photos')
+            .upload(fileName, decode(base64Data), {
+              contentType: 'image/jpeg',
+              upsert: false,
+            });
+
+          if (!uploadError) {
+            // Get public URL
+            const { data: urlData } = supabase.storage
+              .from('scan-photos')
+              .getPublicUrl(fileName);
+
+            // Store photo URL in answers for later verification
+            setAnswers(prev => ({ ...prev, _verification_photo_url: urlData.publicUrl }));
+            setPhotoVerified('verified');
+          }
+        };
+      };
+      reader.readAsDataURL(file);
+    } catch (err) {
+      console.error('Error uploading photo:', err);
+      setPhotoVerified(null);
+    }
+
+    setUploadingPhoto(false);
+    e.target.value = '';
+  }
+
+  // Decode base64 to Uint8Array for storage upload
+  function decode(base64: string): Uint8Array {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
   }
 
   return (
@@ -806,6 +883,56 @@ export default function ScannerPage() {
                 </div>
               </div>
             )}
+
+            {/* Verification photo section */}
+            <div className="border border-slate-700 rounded-xl p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <FileImage className="w-4 h-4 text-violet-400" />
+                  <span className="text-white text-sm font-medium">Foto de verificación (opcional)</span>
+                </div>
+                {photoVerified === 'verified' && (
+                  <span className="text-xs text-emerald-400 flex items-center gap-1">
+                    <CheckCircle2 className="w-3 h-3" /> Foto subida
+                  </span>
+                )}
+              </div>
+              <p className="text-slate-400 text-xs">
+                Sube una foto del envase para verificar que coincide con la marca y tamaño declarados.
+                Esto ayuda a evitar reportes falsos.
+              </p>
+              <input
+                ref={photoInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                onChange={handleVerificationPhoto}
+                className="hidden"
+              />
+              {verificationPhoto ? (
+                <div className="relative">
+                  <img src={verificationPhoto} alt="Foto de verificación" className="w-full h-40 object-cover rounded-lg bg-slate-800" />
+                  <button
+                    onClick={() => { setVerificationPhoto(null); setPhotoVerified(null); }}
+                    className="absolute top-2 right-2 bg-slate-900/80 hover:bg-red-500/80 text-white p-1.5 rounded-lg transition-colors"
+                  >
+                    <XCircle className="w-4 h-4" />
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => photoInputRef.current?.click()}
+                  disabled={uploadingPhoto}
+                  className="w-full flex items-center justify-center gap-2 bg-violet-500/10 border border-violet-500/25 hover:bg-violet-500/20 disabled:opacity-50 text-violet-300 rounded-xl py-3 text-sm font-medium transition-colors"
+                >
+                  {uploadingPhoto ? (
+                    <><Loader2 className="w-4 h-4 animate-spin" /> Subiendo...</>
+                  ) : (
+                    <><Camera className="w-4 h-4" /> Tomar foto del envase</>
+                  )}
+                </button>
+              )}
+            </div>
 
             {SCAN_QUESTIONS.map(q => {
               // Skip if showIf condition is not met
