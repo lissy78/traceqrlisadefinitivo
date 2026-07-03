@@ -773,6 +773,7 @@ export default function ScannerPage() {
 
       reader.onload = async (ev) => {
         img.src = ev.target?.result as string;
+
         img.onload = async () => {
           // Resize to max 800px
           const canvas = document.createElement('canvas');
@@ -838,35 +839,65 @@ export default function ScannerPage() {
           }
 
           // Upload to Supabase storage for verification
-          const fileName = `scan_verification/${profile?.id}_${Date.now()}.jpg`;
+          // File name must start with user ID for RLS policy
+          const fileName = `${profile?.id}/scan_${Date.now()}.jpg`;
           const base64Data = dataUrl.split(',')[1];
 
-          const { error: uploadError } = await supabase.storage
-            .from('scan-photos')
-            .upload(fileName, decode(base64Data), {
-              contentType: 'image/jpeg',
-              upsert: false,
-            });
-
-          if (!uploadError) {
-            // Get public URL
-            const { data: urlData } = supabase.storage
+          try {
+            const { error: uploadError } = await supabase.storage
               .from('scan-photos')
-              .getPublicUrl(fileName);
+              .upload(fileName, decode(base64Data), {
+                contentType: 'image/jpeg',
+                upsert: false,
+              });
 
-            // Store photo URL in answers for later verification
-            setAnswers(prev => ({ ...prev, _verification_photo_url: urlData.publicUrl }));
-            setPhotoVerified('verified');
+            if (uploadError) {
+              console.error('Upload error:', uploadError);
+              setPhotoVerified(null);
+              setError('Error al subir la foto. Intenta de nuevo.');
+            } else {
+              // Get public URL
+              const { data: urlData } = supabase.storage
+                .from('scan-photos')
+                .getPublicUrl(fileName);
+
+              // Store photo URL in answers for later verification
+              setAnswers(prev => ({ ...prev, _verification_photo_url: urlData.publicUrl }));
+              setPhotoVerified('verified');
+              console.log('Photo uploaded successfully:', urlData.publicUrl);
+            }
+          } catch (uploadErr) {
+            console.error('Upload exception:', uploadErr);
+            setPhotoVerified(null);
+            setError('Error al subir la foto. Intenta de nuevo.');
           }
+
+          setUploadingPhoto(false);
+        };
+
+        img.onerror = () => {
+          console.error('Error loading image');
+          setPhotoVerified(null);
+          setUploadingPhoto(false);
+          setError('No se pudo cargar la imagen. Intenta con otra foto.');
         };
       };
+
+      reader.onerror = () => {
+        console.error('Error reading file');
+        setPhotoVerified(null);
+        setUploadingPhoto(false);
+        setError('No se pudo leer el archivo. Intenta de nuevo.');
+      };
+
       reader.readAsDataURL(file);
     } catch (err) {
-      console.error('Error uploading photo:', err);
+      console.error('Error processing photo:', err);
       setPhotoVerified(null);
+      setUploadingPhoto(false);
+      setError('Error al procesar la foto. Intenta de nuevo.');
     }
 
-    setUploadingPhoto(false);
     e.target.value = '';
   }
 
