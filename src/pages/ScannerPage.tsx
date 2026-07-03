@@ -267,71 +267,165 @@ export default function ScannerPage() {
     setError('');
     setMatchedCompany(null);
 
-    // Only accept TraceQR UCIDs - reject any other code type
+    // Check if it's a TraceQR UCID
     const ucidCheck = isTraceQRUCID(code);
-    if (!ucidCheck.isUCID) {
-      setError('Codigo no valido. Solo se aceptan QR generados por TraceQR (UCID). Los codigos de barras externos no estan permitidos.');
+
+    if (ucidCheck.isUCID) {
+      // UCID flow - validate against database
+      const validation = await lookupAndValidateUCID(ucidCheck.shortCode, ucidCheck.ucidHash);
+
+      if (!validation.valid) {
+        setError(validation.error || 'UCID invalido');
+        setLoading(false);
+        return;
+      }
+
+      // UCID is valid - get company info
+      const ucidData = validation.data as Record<string, unknown>;
+      const ucidHash = (ucidData.ucid_hash as string) || ucidCheck.ucidHash || '';
+      const companyData = ucidData.company_id ? await supabase
+        .from('companies')
+        .select('id, name')
+        .eq('id', ucidData.company_id as string)
+        .maybeSingle() : null;
+
+      if (companyData?.data) {
+        setMatchedCompany({ id: companyData.data.id, name: companyData.data.name });
+      }
+
+      // Set product info from UCID
+      const ucidProduct: ProductCatalog = {
+        id: '',
+        barcode: ucidHash.slice(0, 24),
+        name: (ucidData.product_name as string) || `UCID: ${ucidData.short_code}`,
+        brand: (ucidData.product_brand as string) || null,
+        category: null,
+        company_id: (ucidData.company_id as string) || null,
+        image_url: null,
+        description: null,
+        material: (ucidData.container_type as string) || 'PET',
+        weight_grams: null,
+        off_data: { ucid_hash: ucidHash, short_code: ucidData.short_code, validated: true },
+        ai_confidence: 1,
+        scan_count: 1,
+        created_at: '',
+        updated_at: '',
+      };
+      setProduct(ucidProduct);
+
+      // Store UCID data for later use
+      setAnswers(prev => ({
+        ...prev,
+        _scan_type: 'qr',
+        _ucid_id: ucidData.ucid_id as string,
+        _ucid_hash: ucidHash,
+        _ucid_brand: (ucidData.product_brand as string) || '',
+        _ucid_company_id: (ucidData.company_id as string) || '',
+      }));
       setLoading(false);
-      return;
-    }
+      setStep('questions');
+      requestGeolocation();
+    } else {
+      // External barcode flow - for old containers without QR
+      // Check if barcode exists in product_catalog or OpenFoodFacts
+      let catalogProduct: ProductCatalog | null = null;
 
-    // Validate the UCID against the database
-    const validation = await lookupAndValidateUCID(ucidCheck.shortCode, ucidCheck.ucidHash);
+      // First check local catalog
+      const { data: localProduct } = await supabase
+        .from('product_catalog')
+        .select('*')
+        .eq('barcode', code)
+        .maybeSingle();
 
-    if (!validation.valid) {
-      setError(validation.error || 'UCID invalido');
+      if (localProduct) {
+        catalogProduct = localProduct as ProductCatalog;
+        if (catalogProduct.company_id) {
+          const { data: companyData } = await supabase
+            .from('companies')
+            .select('id, name')
+            .eq('id', catalogProduct.company_id)
+            .maybeSingle();
+          if (companyData) {
+            setMatchedCompany({ id: companyData.id, name: companyData.name });
+          }
+        }
+      } else {
+        // Try OpenFoodFacts
+        try {
+          const offData = await fetchOpenFoodFacts(code);
+          if (offData) {
+            setOffData(offData);
+            const brand = (offData.brands as string) || null;
+            let offCompany: { id: string; name: string } | null = null;
+            if (brand) {
+              offCompany = await matchBrandToCompany(brand);
+              if (offCompany) setMatchedCompany(offCompany);
+            }
+
+            // Create temp product from OFF data
+            catalogProduct = {
+              id: '',
+              barcode: code,
+              name: (offData.product_name as string) || `Producto ${code}`,
+              brand,
+              category: null,
+              company_id: offCompany?.id || null,
+              image_url: (offData.image_url as string) || null,
+              description: null,
+              material: 'PET',
+              weight_grams: null,
+              off_data: offData,
+              ai_confidence: 0.8,
+              scan_count: 0,
+              created_at: '',
+              updated_at: '',
+            };
+          }
+        } catch {
+          // OFF lookup failed, continue with minimal product
+        }
+      }
+
+      if (!catalogProduct) {
+        // Create minimal product for unknown barcode
+        catalogProduct = {
+          id: '',
+          barcode: code,
+          name: `Envase ${code.slice(-6)}`,
+          brand: null,
+          category: null,
+          company_id: null,
+          image_url: null,
+          description: null,
+          material: 'PET',
+          weight_grams: null,
+          off_data: null,
+          ai_confidence: 0.5,
+          scan_count: 0,
+          created_at: '',
+          updated_at: '',
+        };
+      }
+
+      setProduct(catalogProduct);
+
+      // Mark as external barcode requiring verification
+      setAnswers(prev => ({
+        ...prev,
+        _scan_type: 'barcode',
+        _requires_photo_verification: 'true',
+      }));
+
       setLoading(false);
-      return;
+      setStep('questions');
+      requestGeolocation();
     }
-
-    // UCID is valid - get company info
-    const ucidData = validation.data as Record<string, unknown>;
-    const ucidHash = (ucidData.ucid_hash as string) || ucidCheck.ucidHash || '';
-    const companyData = ucidData.company_id ? await supabase
-      .from('companies')
-      .select('id, name')
-      .eq('id', ucidData.company_id as string)
-      .maybeSingle() : null;
-
-    if (companyData?.data) {
-      setMatchedCompany({ id: companyData.data.id, name: companyData.data.name });
-    }
-
-    // Set product info from UCID
-    const ucidProduct: ProductCatalog = {
-      id: '',
-      barcode: ucidHash.slice(0, 24),
-      name: (ucidData.product_name as string) || `UCID: ${ucidData.short_code}`,
-      brand: (ucidData.product_brand as string) || null,
-      category: null,
-      company_id: (ucidData.company_id as string) || null,
-      image_url: null,
-      description: null,
-      material: (ucidData.container_type as string) || 'PET',
-      weight_grams: null,
-      off_data: { ucid_hash: ucidHash, short_code: ucidData.short_code, validated: true },
-      ai_confidence: 1,
-      scan_count: 1,
-      created_at: '',
-      updated_at: '',
-    };
-    setProduct(ucidProduct);
-
-    // Store UCID data for later use
-    setAnswers(prev => ({
-      ...prev,
-      _ucid_id: ucidData.ucid_id as string,
-      _ucid_hash: ucidHash,
-      _ucid_brand: (ucidData.product_brand as string) || '',
-      _ucid_company_id: (ucidData.company_id as string) || '',
-    }));
-    setLoading(false);
-    setStep('questions');
-    requestGeolocation();
   }, []);
 
   async function handleSubmitAnswers() {
     if (!profile) return;
+
+    const scanType = answers._scan_type as string;
 
     // Check required questions including conditional ones
     const unanswered = SCAN_QUESTIONS.filter(q => {
@@ -347,9 +441,69 @@ export default function ScannerPage() {
       return;
     }
 
-    // Validate brand against UCID: the selected brand must match the UCID's product_brand
+    // === VERIFICATION FOR EXTERNAL BARCODES ===
+    if (scanType === 'barcode') {
+      // Photo verification is MANDATORY for external barcodes
+      if (!verificationPhoto || photoVerified !== 'verified') {
+        setError('La foto de verificación es obligatoria para códigos de barras externos. Toma una foto clara del envase.');
+        return;
+      }
+
+      // OCR validation is required
+      if (!extractedData) {
+        setError('El análisis de imagen no se completó. Por favor toma otra foto del envase.');
+        return;
+      }
+
+      // Validate brand from OCR
+      const selectedBrand = answers['brand_name'] === 'Otro'
+        ? answers['other_brand']?.trim()
+        : answers['brand_name'];
+
+      if (selectedBrand && extractedData.brands.length > 0) {
+        const brandMatch = extractedData.brands.some(
+          b => brandsMatch(b, selectedBrand)
+        );
+        if (!brandMatch) {
+          setError(`La foto muestra la marca "${extractedData.brands.join(', ')}" pero seleccionaste "${selectedBrand}". Los datos no coinciden. Por favor verifica el envase.`);
+          return;
+        }
+      }
+
+      // Verify user is at a collection point (GPS validation)
+      if (!userCoords || geoStatus !== 'granted') {
+        setError('La ubicación GPS es obligatoria para códigos de barras externos. Activa la ubicación y toma la foto en el punto de acopio.');
+        return;
+      }
+
+      // Check if user is near a registered collection point
+      const { data: locations } = await supabase
+        .from('recycling_locations')
+        .select('name, lat, lng')
+        .eq('is_active', true);
+
+      if (locations && locations.length > 0) {
+        const nearPoint = locations.find(loc => {
+          const dist = Math.sqrt(
+            Math.pow((loc.lat - userCoords.lat) * 111000, 2) +
+            Math.pow((loc.lng - userCoords.lng) * 111000 * Math.cos(userCoords.lat * Math.PI / 180), 2)
+          );
+          return dist < 100; // Within 100 meters
+        });
+
+        if (!nearPoint) {
+          setError('Debes estar en un punto de acopio registrado para escanear códigos de barras externos. Acércate a un punto de acopio oficial.');
+          return;
+        }
+
+        // Store the verified collection point
+        setAnswers(prev => ({ ...prev, _verified_collection_point: nearPoint.name }));
+      }
+    }
+
+    // Validate brand against UCID for QR scans
     const ucidBrand = answers._ucid_brand as string | undefined;
-    if (ucidBrand) {
+    if (scanType === 'qr' && ucidBrand) {
       const selectedBrand = answers['brand_name'] === 'Otro'
         ? answers['other_brand']?.trim()
         : answers['brand_name'];
@@ -415,10 +569,21 @@ export default function ScannerPage() {
       resolved_collection_point: collectionPointAnswer,
     };
 
+    // Prepare OCR data for barcode scans
+    const ocrExtractedData = extractedData ? {
+      brands: extractedData.brands,
+      sizes: extractedData.sizes,
+      rawText: extractedData.rawText,
+    } : null;
+
+    const ocrBrands = extractedData?.brands || null;
+    const ocrSizes = extractedData?.sizes || null;
+    const verifiedCollectionPoint = answers._verified_collection_point as string | undefined;
+
     const { error: scanErr } = await supabase.from('scan_events').insert({
       user_id: profile.id,
       barcode: scannedCode,
-      scan_type: ucidId ? 'qr' : 'barcode',
+      scan_type: scanType === 'qr' ? 'qr' : 'barcode',
       acquisition_source: answers['acquisition_source'],
       points_earned: 10,
       token_hash: token,
@@ -428,6 +593,13 @@ export default function ScannerPage() {
       location_lat: userCoords?.lat ?? null,
       location_lng: userCoords?.lng ?? null,
       verification_photo_url: answers['_verification_photo_url'] || null,
+      verification_status: scanType === 'barcode' ? 'verified' : 'pending',
+      ocr_extracted_data: ocrExtractedData,
+      ocr_brands: ocrBrands,
+      ocr_sizes: ocrSizes,
+      verification_passed: scanType === 'barcode',
+      collection_point_verified: !!verifiedCollectionPoint,
+      verified_collection_point_name: verifiedCollectionPoint || null,
     });
 
     if (scanErr) {
@@ -886,7 +1058,25 @@ export default function ScannerPage() {
       {step === 'questions' && (
         <div className="space-y-4">
           {/* Product card */}
-          <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-5">
+          <div className={`bg-slate-900/60 rounded-2xl p-5 ${
+            answers._scan_type === 'barcode'
+              ? 'border-2 border-amber-500/50'
+              : 'border border-slate-800'
+          }`}>
+            {/* Scan type badge */}
+            {answers._scan_type === 'barcode' && (
+              <div className="mb-3 flex items-center gap-2 bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2">
+                <Barcode className="w-4 h-4 text-amber-400" />
+                <span className="text-amber-300 text-xs font-medium">Código de barras externo - Verificación obligatoria</span>
+              </div>
+            )}
+            {answers._scan_type === 'qr' && (
+              <div className="mb-3 flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/30 rounded-lg px-3 py-2">
+                <QrCode className="w-4 h-4 text-emerald-400" />
+                <span className="text-emerald-300 text-xs font-medium">UCID TraceQR - Envase registrado</span>
+              </div>
+            )}
+
             <div className="flex items-center gap-4">
               {product?.image_url ? (
                 <img src={product.image_url} alt={product.name} className="w-14 h-14 rounded-xl object-cover bg-slate-800" />
@@ -925,10 +1115,16 @@ export default function ScannerPage() {
 
             {/* Auto-geolocation status banner */}
             {geoStatus === 'requesting' && (
-              <div className="flex items-center gap-3 bg-blue-500/10 border border-blue-500/30 rounded-xl px-4 py-3">
-                <Loader2 className="w-5 h-5 animate-spin text-blue-400 shrink-0" />
+              <div className={`flex items-center gap-3 rounded-xl px-4 py-3 ${
+                answers._scan_type === 'barcode'
+                  ? 'bg-red-500/10 border border-red-500/30'
+                  : 'bg-blue-500/10 border border-blue-500/30'
+              }`}>
+                <Loader2 className={`w-5 h-5 animate-spin shrink-0 ${answers._scan_type === 'barcode' ? 'text-red-400' : 'text-blue-400'}`} />
                 <div>
-                  <p className="text-blue-300 text-sm font-medium">Capturando tu ubicación en tiempo real...</p>
+                  <p className={`text-sm font-medium ${answers._scan_type === 'barcode' ? 'text-red-300' : 'text-blue-300'}`}>
+                    Capturando tu ubicación... {answers._scan_type === 'barcode' ? '(OBLIGATORIA)' : ''}
+                  </p>
                   <p className="text-slate-400 text-xs mt-0.5">Necesario para registrar el punto de reciclaje en el mapa</p>
                 </div>
               </div>
@@ -943,31 +1139,49 @@ export default function ScannerPage() {
               </div>
             )}
             {geoStatus === 'error' && (
-              <div className="flex items-center gap-3 bg-amber-500/10 border border-amber-500/30 rounded-xl px-4 py-3">
-                <AlertCircle className="w-5 h-5 text-amber-400 shrink-0" />
+              <div className={`flex items-center gap-3 rounded-xl px-4 py-3 ${
+                answers._scan_type === 'barcode'
+                  ? 'bg-red-500/10 border border-red-500/30'
+                  : 'bg-amber-500/10 border border-amber-500/30'
+              }`}>
+                <AlertCircle className={`w-5 h-5 shrink-0 ${answers._scan_type === 'barcode' ? 'text-red-400' : 'text-amber-400'}`} />
                 <div>
-                  <p className="text-amber-300 text-sm font-medium">No se pudo obtener la ubicación</p>
+                  <p className={`text-sm font-medium ${answers._scan_type === 'barcode' ? 'text-red-300' : 'text-amber-300'}`}>
+                    No se pudo obtener la ubicación {answers._scan_type === 'barcode' ? '(OBLIGATORIA para códigos de barras)' : ''}
+                  </p>
                   <p className="text-slate-400 text-xs mt-0.5">{locationWarning ?? 'Activa los permisos de ubicación para registrar el punto en el mapa'}</p>
                 </div>
               </div>
             )}
 
             {/* Verification photo section */}
-            <div className="border border-slate-700 rounded-xl p-4 space-y-3">
+            <div className={`border rounded-xl p-4 space-y-3 ${
+              answers._scan_type === 'barcode'
+                ? 'border-red-500/50 bg-red-500/5'
+                : 'border-slate-700'
+            }`}>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <FileImage className="w-4 h-4 text-violet-400" />
-                  <span className="text-white text-sm font-medium">Foto de verificación (opcional)</span>
+                  <FileImage className={`w-4 h-4 ${answers._scan_type === 'barcode' ? 'text-red-400' : 'text-violet-400'}`} />
+                  <span className="text-white text-sm font-medium">
+                    Foto de verificación {answers._scan_type === 'barcode' ? '(OBLIGATORIA)' : '(opcional)'}
+                  </span>
                 </div>
                 {photoVerified === 'verified' && (
                   <span className="text-xs text-emerald-400 flex items-center gap-1">
-                    <CheckCircle2 className="w-3 h-3" /> Foto subida
+                    <CheckCircle2 className="w-3 h-3" /> Foto verificada
+                  </span>
+                )}
+                {answers._scan_type === 'barcode' && photoVerified !== 'verified' && (
+                  <span className="text-xs text-red-400 flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3" /> Requerida
                   </span>
                 )}
               </div>
-              <p className="text-slate-400 text-xs">
-                Sube una foto del envase para verificar que coincide con la marca y tamaño declarados.
-                Esto ayuda a evitar reportes falsos.
+              <p className={`text-xs ${answers._scan_type === 'barcode' ? 'text-red-300' : 'text-slate-400'}`}>
+                {answers._scan_type === 'barcode'
+                  ? 'Para códigos de barras externos es OBLIGATORIO tomar una foto clara del envase. El sistema verificará que la marca coincida con los datos del escaneo.'
+                  : 'Sube una foto del envase para verificar que coincide con la marca y tamaño declarados. Esto ayuda a evitar reportes falsos.'}
               </p>
               <input
                 ref={photoInputRef}
@@ -1052,10 +1266,16 @@ export default function ScannerPage() {
                 <button
                   onClick={() => photoInputRef.current?.click()}
                   disabled={uploadingPhoto}
-                  className="w-full flex items-center justify-center gap-2 bg-violet-500/10 border border-violet-500/25 hover:bg-violet-500/20 disabled:opacity-50 text-violet-300 rounded-xl py-3 text-sm font-medium transition-colors"
+                  className={`w-full flex items-center justify-center gap-2 rounded-xl py-3.5 text-sm font-medium transition-colors ${
+                    answers._scan_type === 'barcode'
+                      ? 'bg-red-500/15 border-2 border-red-500/40 hover:bg-red-500/25 text-red-300'
+                      : 'bg-violet-500/10 border border-violet-500/25 hover:bg-violet-500/20 text-violet-300'
+                  }`}
                 >
                   {uploadingPhoto ? (
                     <><Loader2 className="w-4 h-4 animate-spin" /> Analizando imagen...</>
+                  ) : answers._scan_type === 'barcode' ? (
+                    <><Camera className="w-4 h-4" /> Tomar foto OBLIGATORIA del envase</>
                   ) : (
                     <><Camera className="w-4 h-4" /> Tomar foto del envase</>
                   )}
@@ -1077,16 +1297,20 @@ export default function ScannerPage() {
                         type="button"
                         onClick={requestGeolocation}
                         disabled={geoStatus === 'requesting'}
-                        className="w-full flex items-center justify-center gap-2 bg-blue-500/15 border border-blue-500/30 hover:bg-blue-500/25 disabled:opacity-60 text-blue-300 rounded-xl px-4 py-3 text-sm font-medium transition-colors"
+                        className={`w-full flex items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-medium transition-colors ${
+                          answers._scan_type === 'barcode' && geoStatus !== 'granted'
+                            ? 'bg-red-500/15 border-2 border-red-500/40 hover:bg-red-500/25 text-red-300'
+                            : 'bg-blue-500/15 border border-blue-500/30 hover:bg-blue-500/25 text-blue-300'
+                        } disabled:opacity-60`}
                       >
                         {geoStatus === 'requesting' ? (
                           <><Loader2 className="w-4 h-4 animate-spin" /> Obteniendo ubicación...</>
                         ) : geoStatus === 'granted' ? (
                           <><CheckCircle2 className="w-4 h-4 text-emerald-400" /> <span className="text-emerald-300">Ubicación capturada</span></>
                         ) : geoStatus === 'error' ? (
-                          <><AlertCircle className="w-4 h-4 text-amber-400" /> Reintentar ubicación</>
+                          <><AlertCircle className="w-4 h-4 text-amber-400" /> Reintentar ubicación {answers._scan_type === 'barcode' ? '(OBLIGATORIA)' : ''}</>
                         ) : (
-                          <><Navigation className="w-4 h-4" /> Capturar ubicación en tiempo real</>
+                          <><Navigation className="w-4 h-4" /> Capturar ubicación {answers._scan_type === 'barcode' ? '(OBLIGATORIA)' : ''}</>
                         )}
                       </button>
                       {answers['location'] && geoStatus === 'granted' && (
@@ -1096,14 +1320,18 @@ export default function ScannerPage() {
                         </div>
                       )}
                       {locationWarning && (
-                        <div className="flex items-start gap-2 bg-amber-500/10 border border-amber-500/20 rounded-xl px-3 py-2">
-                          <AlertCircle className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
-                          <span className="text-amber-300 text-xs">{locationWarning}</span>
+                        <div className={`flex items-start gap-2 rounded-xl px-3 py-2 ${
+                          answers._scan_type === 'barcode'
+                            ? 'bg-red-500/10 border border-red-500/20'
+                            : 'bg-amber-500/10 border border-amber-500/20'
+                        }`}>
+                          <AlertCircle className={`w-3.5 h-3.5 shrink-0 mt-0.5 ${answers._scan_type === 'barcode' ? 'text-red-400' : 'text-amber-400'}`} />
+                          <span className={`text-xs ${answers._scan_type === 'barcode' ? 'text-red-300' : 'text-amber-300'}`}>{locationWarning}</span>
                         </div>
                       )}
                       {geoStatus === 'error' && (
-                        <p className="text-xs text-amber-400 flex items-center gap-1">
-                          <AlertCircle className="w-3 h-3" /> Permiso denegado. La ubicación se guardará como no disponible.
+                        <p className={`text-xs flex items-center gap-1 ${answers._scan_type === 'barcode' ? 'text-red-400' : 'text-amber-400'}`}>
+                          <AlertCircle className="w-3 h-3" /> Permiso denegado. {answers._scan_type === 'barcode' ? 'La ubicación es OBLIGATORIA para códigos de barras.' : 'La ubicación se guardará como no disponible.'}
                         </p>
                       )}
                     </div>

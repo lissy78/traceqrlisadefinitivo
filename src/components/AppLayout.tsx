@@ -4,7 +4,7 @@ import { getDisplayName } from '../lib/utils';
 import {
   Recycle, LayoutDashboard, QrCode, Trophy, MapPin, Package, MapPinned,
   Users, Building2, Settings, LogOut, Menu, X, ChevronRight, Star, Gift, Bot, Hash,
-  Printer
+  Printer, Tag
 } from 'lucide-react';
 
 interface NavItem {
@@ -46,6 +46,7 @@ export default function AppLayout({ children, activeView, onNavigate }: AppLayou
     { label: 'Empresas', icon: <Building2 className="w-5 h-5" />, view: 'admin-companies' },
     { label: 'Usuarios', icon: <Users className="w-5 h-5" />, view: 'admin-users' },
     { label: 'Productos', icon: <Package className="w-5 h-5" />, view: 'admin-products' },
+    { label: 'Lineas Producto', icon: <Tag className="w-5 h-5" />, view: 'admin-product-lines' },
     { label: 'UCIDs', icon: <Hash className="w-5 h-5" />, view: 'admin-ucid' },
     { label: 'Imprimir QRs', icon: <Printer className="w-5 h-5" />, view: 'ucid-print' },
     { label: 'Puntos Acopio', icon: <MapPinned className="w-5 h-5" />, view: 'admin-locations' },

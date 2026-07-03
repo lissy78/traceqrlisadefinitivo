@@ -19,6 +19,7 @@ import AdminStock from './pages/AdminStock';
 import AdminProducts from './pages/AdminProducts';
 import AdminLocations from './pages/AdminLocations';
 import AdminUCID from './pages/AdminUCID';
+import AdminProductLines from './pages/AdminProductLines';
 import UCIDPrint from './pages/UCIDPrint';
 
 function AppContent() {
@@ -83,6 +84,7 @@ function AppContent() {
       case 'admin-stock': return <AdminStock />;
       case 'admin-products': return <AdminProducts />;
       case 'admin-locations': return <AdminLocations />;
+      case 'admin-product-lines': return <AdminProductLines />;
       case 'admin-settings': return <AdminSettings />;
       case 'ai-chatbot': return <AIChatbot />;
 

@@ -1,21 +1,32 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../lib/auth';
 import { supabase, ScanEvent, Company } from '../lib/supabase';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, LineChart, Line, PieChart, Pie, Cell, CartesianGrid } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, LineChart, Line, PieChart, Pie, Cell, CartesianGrid, AreaChart, Area, Legend } from 'recharts';
 import {
   Package, TrendingUp, Recycle, BarChart2, MapPin,
   Activity, ShoppingBag, Calendar, Building2, Search,
-  Check, Loader2, Plus, Shield, AlertTriangle, AlertCircle
+  Check, Loader2, Plus, Shield, AlertTriangle, AlertCircle,
+  Users, Target, Award, TrendingDown, Clock, PieChart as PieChartIcon
 } from 'lucide-react';
 
-const COLORS = ['#10b981', '#14b8a6', '#06b6d4', '#3b82f6', '#8b5cf6', '#f59e0b'];
+const COLORS = ['#10b981', '#14b8a6', '#06b6d4', '#3b82f6', '#8b5cf6', '#f59e0b', '#ef4444', '#ec4899'];
 const INDUSTRIES = ['Bebidas', 'Alimentos', 'Farmacéutica', 'Cosméticos', 'Limpieza', 'Otro'];
+
+interface ScanWithDetails extends ScanEvent {
+  product?: {
+    name: string;
+    brand: string | null;
+    image_url: string | null;
+    material: string | null;
+  };
+}
 
 export default function CompanyDashboard() {
   const { profile, refreshProfile } = useAuth();
   const [company, setCompany] = useState<Company | null>(null);
-  const [scans, setScans] = useState<ScanEvent[]>([]);
+  const [scans, setScans] = useState<ScanWithDetails[]>([]);
   const [loading, setLoading] = useState(true);
+  const [timeRange, setTimeRange] = useState<'7d' | '30d' | '90d'>('30d');
 
   useEffect(() => {
     if (profile?.company_id) {
@@ -23,43 +34,92 @@ export default function CompanyDashboard() {
     } else {
       setLoading(false);
     }
-  }, [profile]);
+  }, [profile, timeRange]);
 
   async function loadData() {
     if (!profile?.company_id) return;
+
+    const daysBack = timeRange === '7d' ? 7 : timeRange === '30d' ? 30 : 90;
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - daysBack);
+
     const [{ data: co }, { data: sc }] = await Promise.all([
       supabase.from('companies').select('*').eq('id', profile.company_id).maybeSingle(),
-      supabase.from('scan_events').select('*, product:product_catalog(name, brand, image_url, material)').eq('company_id', profile.company_id).order('created_at', { ascending: false }),
+      supabase.from('scan_events')
+        .select('*, product:product_catalog(name, brand, image_url, material)')
+        .eq('company_id', profile.company_id)
+        .gte('created_at', startDate.toISOString())
+        .order('created_at', { ascending: false }),
     ]);
     const companyData = co as Company;
     setCompany(companyData);
-    setScans((sc ?? []) as ScanEvent[]);
+    setScans((sc ?? []) as ScanWithDetails[]);
     setLoading(false);
   }
 
-  const last7Days = Array.from({ length: 7 }, (_, i) => {
+  // Analytics calculations
+  const getDaysInRange = () => timeRange === '7d' ? 7 : timeRange === '30d' ? 30 : 90;
+
+  const dailyData = Array.from({ length: getDaysInRange() }, (_, i) => {
     const d = new Date();
-    d.setDate(d.getDate() - (6 - i));
-    const label = d.toLocaleDateString('es-CO', { weekday: 'short' });
+    d.setDate(d.getDate() - (getDaysInRange() - 1 - i));
+    const label = d.toLocaleDateString('es-CO', { day: '2-digit', month: 'short' });
     const count = scans.filter(s => new Date(s.created_at).toDateString() === d.toDateString()).length;
     return { day: label, escaneos: count };
   });
+
+  const dayOfWeekData = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'].map((day, i) => ({
+    day,
+    escaneos: scans.filter(s => new Date(s.created_at).getDay() === i).length
+  }));
+
+  const hourlyDistribution = Array.from({ length: 24 }, (_, h) => ({
+    hora: `${h}:00`,
+    escaneos: scans.filter(s => new Date(s.created_at).getHours() === h).length
+  })).filter(h => h.escaneos > 0);
 
   const sourceMap: Record<string, number> = {};
   scans.forEach(s => {
     const src = s.acquisition_source ?? 'Desconocido';
     sourceMap[src] = (sourceMap[src] ?? 0) + 1;
   });
-  const sourceData = Object.entries(sourceMap).map(([name, value]) => ({ name, value }));
+  const sourceData = Object.entries(sourceMap)
+    .map(([name, value]) => ({ name: name.length > 15 ? name.substring(0, 15) + '...' : name, value }))
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 6);
 
-  const monthlyMap: Record<string, number> = {};
+  const materialMap: Record<string, number> = {};
   scans.forEach(s => {
-    const key = new Date(s.created_at).toLocaleDateString('es-CO', { month: 'short', year: '2-digit' });
-    monthlyMap[key] = (monthlyMap[key] ?? 0) + 1;
+    const mat = s.product?.material ?? (s.scan_data as any)?.material_type?.split(' ')[0] ?? 'Otro';
+    materialMap[mat] = (materialMap[mat] ?? 0) + 1;
   });
-  const monthlyData = Object.entries(monthlyMap).slice(-6).map(([month, count]) => ({ month, count }));
+  const materialData = Object.entries(materialMap).map(([name, value]) => ({ name, value }));
+
+  const weeklyTrend = Array.from({ length: 12 }, (_, i) => {
+    const d = new Date();
+    d.setDate(d.getDate() - ((11 - i) * 7));
+    const weekStart = new Date(d);
+    weekStart.setDate(weekStart.getDate() - 7);
+    const count = scans.filter(s => {
+      const scanDate = new Date(s.created_at);
+      return scanDate >= weekStart && scanDate < d;
+    }).length;
+    return { week: `S${Math.ceil((d.getDate() - new Date(d.getFullYear(), d.getMonth(), 1).getDate()) / 7)}`, escaneos: count };
+  });
 
   const uniqueUsers = new Set(scans.map(s => s.user_id)).size;
+  const avgScansPerUser = scans.length > 0 ? (scans.length / uniqueUsers).toFixed(1) : '0';
+
+  const todayCount = scans.filter(s => new Date(s.created_at).toDateString() === new Date().toDateString()).length;
+  const yesterdayCount = scans.filter(s => {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    return new Date(s.created_at).toDateString() === d.toDateString();
+  }).length;
+  const todayVsYesterday = yesterdayCount > 0 ? ((todayCount - yesterdayCount) / yesterdayCount * 100).toFixed(0) : 'N/A';
+
+  const maxDailyCount = Math.max(...dailyData.map(d => d.escaneos), 1);
+  const peakDay = dailyData.find(d => d.escaneos === maxDailyCount);
 
   if (!profile?.company_id) {
     return <CompanySetup onLinked={() => { refreshProfile().then(() => loadData()); }} />;
@@ -92,7 +152,7 @@ export default function CompanyDashboard() {
               </li>
               <li className="flex items-start gap-2">
                 <AlertTriangle className="w-3 h-3 text-amber-400 mt-0.5 shrink-0" />
-                <span> Los datos de tus productos siguen siendo rastreados</span>
+                <span>Los datos de tus productos siguen siendo rastreados</span>
               </li>
               <li className="flex items-start gap-2">
                 <AlertTriangle className="w-3 h-3 text-amber-400 mt-0.5 shrink-0" />
@@ -107,43 +167,99 @@ export default function CompanyDashboard() {
 
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6">
-      <div className="flex items-center justify-between">
+      {/* Header */}
+      <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
           <h1 className="text-2xl font-bold text-white">{company?.name ?? 'Mi empresa'}</h1>
           <p className="text-slate-400 text-sm mt-1 flex items-center gap-1">
-            <Activity className="w-3 h-3" /> Dashboard de trazabilidad
+            <Activity className="w-3 h-3" /> Panel de control de trazabilidad
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <div className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" />
-          <span className="text-slate-400 text-xs">En vivo</span>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center bg-slate-800 rounded-lg p-1">
+            {(['7d', '30d', '90d'] as const).map(range => (
+              <button
+                key={range}
+                onClick={() => setTimeRange(range)}
+                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                  timeRange === range
+                    ? 'bg-emerald-500 text-white'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                {range === '7d' ? '7 días' : range === '30d' ? '30 días' : '90 días'}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-2 bg-slate-800/60 rounded-lg px-3 py-1.5">
+            <div className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" />
+            <span className="text-slate-400 text-xs">En vivo</span>
+          </div>
         </div>
       </div>
 
+      {/* KPI Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <KPICard icon={<Recycle className="w-5 h-5 text-emerald-400" />} label="Total reciclados" value={scans.length.toString()} sub="envases rastreados" color="emerald" />
-        <KPICard icon={<TrendingUp className="w-5 h-5 text-blue-400" />} label="Esta semana" value={last7Days.reduce((s, d) => s + d.escaneos, 0).toString()} sub="últimos 7 días" color="blue" />
-        <KPICard icon={<ShoppingBag className="w-5 h-5 text-amber-400" />} label="Usuarios únicos" value={uniqueUsers.toString()} sub="recicladores" color="amber" />
-        <KPICard icon={<Package className="w-5 h-5 text-teal-400" />} label="Fuentes distintas" value={Object.keys(sourceMap).length.toString()} sub="puntos de adquisición" color="teal" />
+        <KPICard
+          icon={<Recycle className="w-5 h-5 text-emerald-400" />}
+          label="Total reciclados"
+          value={scans.length.toString()}
+          sub={`${timeRange === '7d' ? 'última' : 'últimos'} ${getDaysInRange()} días`}
+          trend={todayVsYesterday !== 'N/A' ? parseFloat(todayVsYesterday) : undefined}
+          color="emerald"
+        />
+        <KPICard
+          icon={<Users className="w-5 h-5 text-blue-400" />}
+          label="Recicladores únicos"
+          value={uniqueUsers.toString()}
+          sub={`${avgScansPerUser} escaneos/promedio`}
+          color="blue"
+        />
+        <KPICard
+          icon={<Target className="w-5 h-5 text-amber-400" />}
+          label="Día pico"
+          value={peakDay ? peakDay.escaneos.toString() : '0'}
+          sub={peakDay ? peakDay.day : 'Sin datos'}
+          color="amber"
+        />
+        <KPICard
+          icon={<PieChartIcon className="w-5 h-5 text-teal-400" />}
+          label="Fuentes distintas"
+          value={Object.keys(sourceMap).length.toString()}
+          sub="puntos de adquisición"
+          color="teal"
+        />
       </div>
 
+      {/* Main Charts Row */}
       <div className="grid lg:grid-cols-2 gap-6">
-        <ChartCard title="Escaneos últimos 7 días" icon={<BarChart2 className="w-4 h-4 text-emerald-400" />}>
-          <ResponsiveContainer width="100%" height={200}>
-            <BarChart data={last7Days} barSize={28}>
+        {/* Daily Trend Chart */}
+        <ChartCard title="Tendencia diaria de escaneos" icon={<TrendingUp className="w-4 h-4 text-emerald-400" />}>
+          <ResponsiveContainer width="100%" height={240}>
+            <AreaChart data={dailyData}>
+              <defs>
+                <linearGradient id="colorEscaneos" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
+                  <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                </linearGradient>
+              </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-              <XAxis dataKey="day" stroke="#64748b" tick={{ fill: '#94a3b8', fontSize: 12 }} />
+              <XAxis dataKey="day" stroke="#64748b" tick={{ fill: '#94a3b8', fontSize: 10 }} interval="preserveStartEnd" />
               <YAxis stroke="#64748b" tick={{ fill: '#94a3b8', fontSize: 12 }} />
-              <Tooltip contentStyle={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 12, color: '#fff' }} />
-              <Bar dataKey="escaneos" fill="#10b981" radius={[6, 6, 0, 0]} />
-            </BarChart>
+              <Tooltip
+                contentStyle={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 12, color: '#fff' }}
+                labelFormatter={(label) => `Día: ${label}`}
+              />
+              <Area type="monotone" dataKey="escaneos" stroke="#10b981" fillOpacity={1} fill="url(#colorEscaneos)" strokeWidth={2} />
+            </AreaChart>
           </ResponsiveContainer>
         </ChartCard>
 
+        {/* Sources Pie Chart */}
         <ChartCard title="Fuentes de adquisición" icon={<MapPin className="w-4 h-4 text-amber-400" />}>
           {sourceData.length > 0 ? (
             <div className="flex items-center gap-4">
-              <ResponsiveContainer width="50%" height={180}>
+              <ResponsiveContainer width="50%" height={200}>
                 <PieChart>
                   <Pie data={sourceData} cx="50%" cy="50%" innerRadius={45} outerRadius={70} dataKey="value" paddingAngle={3}>
                     {sourceData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
@@ -152,7 +268,7 @@ export default function CompanyDashboard() {
                 </PieChart>
               </ResponsiveContainer>
               <div className="flex-1 space-y-2">
-                {sourceData.slice(0, 5).map((d, i) => (
+                {sourceData.map((d, i) => (
                   <div key={d.name} className="flex items-center gap-2">
                     <div className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: COLORS[i % COLORS.length] }} />
                     <span className="text-slate-400 text-xs truncate flex-1">{d.name}</span>
@@ -165,71 +281,147 @@ export default function CompanyDashboard() {
         </ChartCard>
       </div>
 
-      <ChartCard title="Tendencia mensual" icon={<TrendingUp className="w-4 h-4 text-blue-400" />}>
-        <ResponsiveContainer width="100%" height={200}>
-          <LineChart data={monthlyData}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-            <XAxis dataKey="month" stroke="#64748b" tick={{ fill: '#94a3b8', fontSize: 12 }} />
-            <YAxis stroke="#64748b" tick={{ fill: '#94a3b8', fontSize: 12 }} />
-            <Tooltip contentStyle={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 12, color: '#fff' }} />
-            <Line type="monotone" dataKey="count" stroke="#3b82f6" strokeWidth={2} dot={{ fill: '#3b82f6', r: 4 }} />
-          </LineChart>
-        </ResponsiveContainer>
+      {/* Secondary Charts Row */}
+      <div className="grid lg:grid-cols-3 gap-6">
+        {/* Day of Week */}
+        <ChartCard title="Por día de la semana" icon={<Calendar className="w-4 h-4 text-blue-400" />}>
+          <ResponsiveContainer width="100%" height={180}>
+            <BarChart data={dayOfWeekData} barSize={24}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+              <XAxis dataKey="day" stroke="#64748b" tick={{ fill: '#94a3b8', fontSize: 11 }} />
+              <YAxis stroke="#64748b" tick={{ fill: '#94a3b8', fontSize: 11 }} />
+              <Tooltip contentStyle={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 12, color: '#fff' }} />
+              <Bar dataKey="escaneos" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </ChartCard>
+
+        {/* Materials Distribution */}
+        <ChartCard title="Por tipo de material" icon={<Package className="w-4 h-4 text-teal-400" />}>
+          {materialData.length > 0 ? (
+            <div className="space-y-3 pt-2">
+              {materialData.map((m, i) => {
+                const pct = scans.length > 0 ? ((m.value / scans.length) * 100).toFixed(0) : 0;
+                return (
+                  <div key={m.name}>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-slate-300 text-xs">{m.name}</span>
+                      <span className="text-white text-xs font-semibold">{m.value} ({pct}%)</span>
+                    </div>
+                    <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
+                      <div className="h-full rounded-full" style={{ width: `${pct}%`, background: COLORS[i % COLORS.length] }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : <EmptyChart />}
+        </ChartCard>
+
+        {/* Weekly Trend */}
+        <ChartCard title="Tendencia semanal" icon={<TrendingUp className="w-4 h-4 text-violet-400" />}>
+          <ResponsiveContainer width="100%" height={180}>
+            <LineChart data={weeklyTrend}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+              <XAxis dataKey="week" stroke="#64748b" tick={{ fill: '#94a3b8', fontSize: 11 }} />
+              <YAxis stroke="#64748b" tick={{ fill: '#94a3b8', fontSize: 11 }} />
+              <Tooltip contentStyle={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 12, color: '#fff' }} />
+              <Line type="monotone" dataKey="escaneos" stroke="#8b5cf6" strokeWidth={2} dot={{ fill: '#8b5cf6', r: 3 }} />
+            </LineChart>
+          </ResponsiveContainer>
+        </ChartCard>
+      </div>
+
+      {/* Hourly Distribution */}
+      <ChartCard title="Distribución por hora del día" icon={<Clock className="w-4 h-4 text-rose-400" />}>
+        {hourlyDistribution.length > 0 ? (
+          <ResponsiveContainer width="100%" height={160}>
+            <BarChart data={hourlyDistribution} barSize={16}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+              <XAxis dataKey="hora" stroke="#64748b" tick={{ fill: '#94a3b8', fontSize: 10 }} interval="preserveStartEnd" />
+              <YAxis stroke="#64748b" tick={{ fill: '#94a3b8', fontSize: 11 }} />
+              <Tooltip contentStyle={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 12, color: '#fff' }} />
+              <Bar dataKey="escaneos" fill="#f43f5e" radius={[3, 3, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        ) : <EmptyChart />}
       </ChartCard>
 
+      {/* Recent Scans Table */}
       <div className="bg-slate-900/60 border border-slate-800 rounded-2xl overflow-hidden">
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-800">
           <h2 className="text-white font-semibold flex items-center gap-2">
             <Calendar className="w-4 h-4 text-slate-400" /> Últimas trazabilidades
           </h2>
-          <span className="text-slate-500 text-xs">{scans.length} registros</span>
+          <span className="text-slate-500 text-xs">{scans.length} registros en período</span>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
               <tr className="border-b border-slate-800">
-                <th className="text-left text-xs text-slate-500 font-medium px-5 py-3">Producto / Código</th>
+                <th className="text-left text-xs text-slate-500 font-medium px-5 py-3">Producto</th>
                 <th className="text-left text-xs text-slate-500 font-medium px-5 py-3">Marca</th>
                 <th className="text-left text-xs text-slate-500 font-medium px-5 py-3">Fuente</th>
                 <th className="text-left text-xs text-slate-500 font-medium px-5 py-3">Material</th>
-                <th className="text-left text-xs text-slate-500 font-medium px-5 py-3">Token (SHA-256)</th>
+                <th className="text-left text-xs text-slate-500 font-medium px-5 py-3">Token</th>
                 <th className="text-left text-xs text-slate-500 font-medium px-5 py-3">Fecha</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800">
-              {scans.slice(0, 15).map(scan => (
+              {scans.slice(0, 20).map(scan => (
                 <tr key={scan.id} className="hover:bg-slate-800/30 transition-colors">
                   <td className="px-5 py-3">
                     <div className="flex items-center gap-2">
-                      {(scan as any).product?.image_url ? (
-                        <img src={(scan as any).product.image_url} alt="" className="w-7 h-7 rounded-lg object-cover bg-slate-800" />
+                      {scan.product?.image_url ? (
+                        <img src={scan.product.image_url} alt="" className="w-7 h-7 rounded-lg object-cover bg-slate-800" />
                       ) : <div className="w-7 h-7 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center"><Package className="w-3 h-3 text-slate-500" /></div>}
                       <div>
-                        <p className="text-white text-xs font-medium">{(scan as any).product?.name ?? 'Desconocido'}</p>
-                        <span className="font-mono text-xs text-slate-500">{scan.barcode}</span>
+                        <p className="text-white text-xs font-medium">{scan.product?.name ?? 'Desconocido'}</p>
+                        <span className="font-mono text-xs text-slate-500">{scan.barcode?.slice(0, 12)}...</span>
                       </div>
                     </div>
                   </td>
                   <td className="px-5 py-3">
-                    {(() => { const brand = (scan as any).product?.brand ?? (scan.scan_data as any)?.brand_name; return brand ? <span className="text-xs px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-300 border border-blue-500/20">{brand}</span> : <span className="text-slate-600 text-xs">-</span>; })()}
+                    {scan.product?.brand || (scan.scan_data as any)?.brand_name ? (
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-300 border border-blue-500/20">
+                        {scan.product?.brand ?? (scan.scan_data as any)?.brand_name}
+                      </span>
+                    ) : <span className="text-slate-600 text-xs">-</span>}
                   </td>
-                  <td className="px-5 py-3"><span className="text-slate-300 text-xs">{scan.acquisition_source ?? '-'}</span></td>
                   <td className="px-5 py-3">
-                    {(() => { const mat = (scan as any).product?.material ?? (scan.scan_data as any)?.material_type?.split(' ')[0]; return <span className={`text-xs px-1.5 py-0.5 rounded ${mat === 'PET' ? 'bg-emerald-500/10 text-emerald-400' : mat === 'Vidrio' ? 'bg-blue-500/10 text-blue-400' : mat === 'Aluminio' ? 'bg-amber-500/10 text-amber-400' : 'text-slate-500'}`}>{mat ?? '-'}</span>; })()}
-                  </td>
-                  <td className="px-5 py-3"><span className="font-mono text-xs text-slate-500 truncate max-w-24 block">{scan.token_hash?.slice(0, 16)}...</span></td>
-                  <td className="px-5 py-3">
-                    <span className="text-slate-400 text-xs">
-                      {new Date(scan.created_at).toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: '2-digit' })}
+                    <span className="text-slate-300 text-xs truncate max-w-24 block">
+                      {scan.acquisition_source ?? '-'}
                     </span>
+                  </td>
+                  <td className="px-5 py-3">
+                    {(() => {
+                      const mat = scan.product?.material ?? (scan.scan_data as any)?.material_type?.split(' ')[0];
+                      return <span className={`text-xs px-1.5 py-0.5 rounded ${
+                        mat === 'PET' ? 'bg-emerald-500/10 text-emerald-400' :
+                        mat === 'Vidrio' ? 'bg-blue-500/10 text-blue-400' :
+                        mat === 'Aluminio' || mat === 'Lata' ? 'bg-amber-500/10 text-amber-400' :
+                        'text-slate-500'
+                      }`}>{mat ?? '-'}</span>;
+                    })()}
+                  </td>
+                  <td className="px-5 py-3">
+                    <span className="font-mono text-xs text-slate-500 truncate max-w-20 block">
+                      {scan.token_hash?.slice(0, 14)}...
+                    </span>
+                  </td>
+                  <td className="px-5 py-3">
+                    <div className="text-slate-400 text-xs">
+                      <div>{new Date(scan.created_at).toLocaleDateString('es-CO', { day: '2-digit', month: 'short' })}</div>
+                      <div className="text-slate-600 text-[10px]">{new Date(scan.created_at).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}</div>
+                    </div>
                   </td>
                 </tr>
               ))}
               {scans.length === 0 && (
                 <tr>
-                  <td colSpan={4} className="px-5 py-10 text-center text-slate-500 text-sm">
+                  <td colSpan={6} className="px-5 py-10 text-center text-slate-500 text-sm">
                     <Recycle className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                    No hay datos de trazabilidad aún. Los escaneos de tus productos aparecerán aquí.
+                    No hay datos de trazabilidad en este período.
                   </td>
                 </tr>
               )}
@@ -252,7 +444,6 @@ function CompanySetup({ onLinked }: { onLinked: () => void }) {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    // Only show approved companies (or companies created by this user that are pending)
     supabase.from('companies')
       .select('*')
       .or(`is_approved.eq.true,created_by.eq.${profile?.id}`)
@@ -269,7 +460,6 @@ function CompanySetup({ onLinked }: { onLinked: () => void }) {
     setSaving(true);
     setError('');
 
-    // Verify the company is approved or owned by user
     if (!selected.is_approved && selected.created_by !== profile.id) {
       setError('Solo puedes vincularte a empresas aprobadas por el administrador.');
       setSaving(false);
@@ -313,7 +503,6 @@ function CompanySetup({ onLinked }: { onLinked: () => void }) {
         </div>
 
         <div className="bg-slate-900/60 border border-slate-800 rounded-2xl overflow-hidden">
-          {/* Tabs */}
           <div className="flex border-b border-slate-800">
             <button
               onClick={() => setTab('select')}
@@ -415,10 +604,10 @@ function CompanySetup({ onLinked }: { onLinked: () => void }) {
                   className="w-full bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-white font-semibold py-2.5 rounded-xl transition-colors flex items-center justify-center gap-2"
                 >
                   {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                  {saving ? 'Creando empresa...' : 'Crear empresa (requiere aprobación)'}
+                  {saving ? 'Creando empresa...' : 'Crear empresa'}
                 </button>
                 <p className="text-slate-500 text-xs text-center">
-                  La empresa será creada pero necesitara aprobacion del administrador para acceder al dashboard.
+                  La empresa será creada pero necesitara aprobación del administrador para acceder al dashboard.
                 </p>
               </div>
             )}
@@ -429,16 +618,34 @@ function CompanySetup({ onLinked }: { onLinked: () => void }) {
   );
 }
 
-function KPICard({ icon, label, value, sub, color }: { icon: React.ReactNode; label: string; value: string; sub: string; color: string }) {
+function KPICard({ icon, label, value, sub, trend, color }: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+  sub: string;
+  trend?: number;
+  color: string
+}) {
   const bg: Record<string, string> = {
     emerald: 'bg-emerald-500/10 border-emerald-500/20',
     blue: 'bg-blue-500/10 border-blue-500/20',
     amber: 'bg-amber-500/10 border-amber-500/20',
     teal: 'bg-teal-500/10 border-teal-500/20',
   };
+
   return (
     <div className={`${bg[color]} border rounded-2xl p-5`}>
-      <div className="mb-3">{icon}</div>
+      <div className="flex items-start justify-between">
+        <div className="mb-3">{icon}</div>
+        {trend !== undefined && (
+          <div className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full ${
+            trend >= 0 ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'
+          }`}>
+            {trend >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+            {Math.abs(trend)}%
+          </div>
+        )}
+      </div>
       <p className="text-slate-400 text-xs mb-0.5">{label}</p>
       <p className="text-white text-2xl font-bold">{value}</p>
       <p className="text-slate-500 text-xs mt-0.5">{sub}</p>
