@@ -36,7 +36,19 @@ export default function AdminLocations() {
     is_active: true,
   });
 
-  useEffect(() => { loadLocations(); }, []);
+  useEffect(() => {
+    loadLocations();
+
+    // Real-time subscription: reflect admin changes instantly across all users
+    const channel = supabase
+      .channel('recycling_locations_admin')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'recycling_locations' }, () => {
+        loadLocations();
+      })
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, []);
 
   async function loadLocations() {
     const { data } = await supabase.from('recycling_locations').select('*').order('created_at', { ascending: false });

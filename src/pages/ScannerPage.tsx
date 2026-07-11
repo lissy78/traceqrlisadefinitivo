@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useAuth } from '../lib/auth';
-import { supabase, ProductCatalog } from '../lib/supabase';
+import { supabase, ProductCatalog, RecyclingLocation } from '../lib/supabase';
 import { generateScanToken, fetchOpenFoodFacts, ACQUISITION_SOURCES } from '../lib/utils';
 import {
   QrCode, Barcode, Camera, CheckCircle2, XCircle,
@@ -18,15 +18,8 @@ const PLASTIC_TYPES = [
   'Otros tipos de plástico',
 ];
 
-const COLLECTION_POINTS = [
-  'Univalle - Calle 3N # 2N-17, Barrio Las Vegas, Yumbo',
-  'Punto Verde - Centro Yumbo',
-  'Recicladora Municipal Yumbo',
-  'Ecoparque Río Cauca',
-  'Punto de acopio Colegio',
-  'Punto de acopio Universidad',
-  'Otro',
-];
+// Collection points are now fetched dynamically from the database
+// and updated in real-time via Supabase subscriptions
 
 const SCAN_QUESTIONS: Array<{
   key: string;
@@ -43,7 +36,7 @@ const SCAN_QUESTIONS: Array<{
   { key: 'material_type', label: '¿Qué tipo de plástico es?', type: 'select', options: PLASTIC_TYPES },
   { key: 'container_size', label: '¿Cuál es el tamaño del envase?', type: 'select', options: ['Pequeño (< 500ml)', 'Mediano (500ml - 1L)', 'Grande (> 1L)'] },
   { key: 'container_condition', label: '¿En qué estado está el envase?', type: 'select', options: ['Vacío', 'Parcialmente lleno', 'Lleno (sin abrir)'] },
-  { key: 'collection_point', label: '¿En qué punto de acopio lo entregarás?', type: 'select', options: COLLECTION_POINTS },
+  { key: 'collection_point', label: '¿En qué punto de acopio lo entregarás?', type: 'select', options: [] }, // options set dynamically from DB
   { key: 'other_collection_point', label: 'Especifica el punto de acopio', type: 'text', options: [], showIf: { key: 'collection_point', value: 'Otro' } },
   { key: 'location', label: 'Ubicación actual (GPS)', type: 'location', options: [] },
 ];
@@ -59,6 +52,20 @@ async function matchBrandToCompany(brand: string | null): Promise<{ id: string; 
   const cleanBrand = brand.trim();
   if (!cleanBrand) return null;
 
+  // First, check product_lines table for an exact brand match
+  const { data: lineData } = await supabase
+    .from('product_lines')
+    .select('company_id, company:companies(id, name)')
+    .ilike('brand_name', cleanBrand)
+    .eq('is_active', true)
+    .limit(1);
+
+  if (lineData && lineData.length > 0) {
+    const row = lineData[0] as { company_id: string; company: { id: string; name: string } | null };
+    if (row.company) return { id: row.company.id, name: row.company.name };
+  }
+
+  // Fallback: fuzzy match on company name
   const { data } = await supabase
     .from('companies')
     .select('id, name')
@@ -72,6 +79,43 @@ async function matchBrandToCompany(brand: string | null): Promise<{ id: string; 
     c.name.toLowerCase().includes(brandLower) || brandLower.includes(c.name.toLowerCase().split(' ')[0])
   );
   return exact ?? data[0];
+}
+
+// Verify a barcode against product_lines: check if the brand the user selected
+// is registered as an active product line for a company.
+async function verifyBarcodeAgainstProductLines(
+  brand: string | null
+): Promise<{ verified: boolean; company: { id: string; name: string } | null; matchedBrand: string | null }> {
+  if (!brand) return { verified: false, company: null, matchedBrand: null };
+
+  const { data } = await supabase
+    .from('product_lines')
+    .select('brand_name, company_id, company:companies(id, name)')
+    .eq('is_active', true);
+
+  if (!data || data.length === 0) return { verified: false, company: null, matchedBrand: null };
+
+  const normalize = (s: string) =>
+    s.trim().toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9\s]/g, '')
+      .replace(/\s+/g, ' ');
+
+  const brandNorm = normalize(brand);
+
+  for (const line of data as Array<{ brand_name: string; company_id: string; company: { id: string; name: string } | null }>) {
+    const lineNorm = normalize(line.brand_name);
+    if (lineNorm === brandNorm || lineNorm.includes(brandNorm) || brandNorm.includes(lineNorm)) {
+      return {
+        verified: true,
+        company: line.company ? { id: line.company.id, name: line.company.name } : null,
+        matchedBrand: line.brand_name,
+      };
+    }
+  }
+
+  return { verified: false, company: null, matchedBrand: null };
 }
 
 // Detect if code is a TraceQR UCID (QR from our platform)
@@ -163,6 +207,8 @@ export default function ScannerPage() {
   const [photoVerified, setPhotoVerified] = useState<'pending' | 'verified' | 'mismatch' | null>(null);
   const [extractedData, setExtractedData] = useState<{ brands: string[]; sizes: string[]; rawText: string } | null>(null);
   const [ocrProgress, setOcrProgress] = useState(0);
+  const [collectionPoints, setCollectionPoints] = useState<string[]>([]);
+  const [dbLocations, setDbLocations] = useState<RecyclingLocation[]>([]);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -173,8 +219,35 @@ export default function ScannerPage() {
   const hasBarcodeDetector = typeof window !== 'undefined' && 'BarcodeDetector' in window;
 
   useEffect(() => {
-    return () => stopCamera();
+    loadCollectionPoints();
+
+    // Real-time subscription: update collection points when admin adds/edits locations
+    const channel = supabase
+      .channel('recycling_locations_scanner')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'recycling_locations' }, () => {
+        loadCollectionPoints();
+      })
+      .subscribe();
+
+    return () => {
+      stopCamera();
+      supabase.removeChannel(channel);
+    };
   }, []);
+
+  async function loadCollectionPoints() {
+    const { data } = await supabase
+      .from('recycling_locations')
+      .select('*')
+      .eq('is_active', true)
+      .order('name');
+
+    const locs = (data ?? []) as RecyclingLocation[];
+    setDbLocations(locs);
+    const names = locs.map(l => l.name);
+    names.push('Otro');
+    setCollectionPoints(names);
+  }
 
   function stopCamera() {
     if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
@@ -407,6 +480,18 @@ export default function ScannerPage() {
         };
       }
 
+      // Cross-reference with product_lines to verify barcode belongs to a registered company
+      if (catalogProduct.brand) {
+        const verification = await verifyBarcodeAgainstProductLines(catalogProduct.brand);
+        if (verification.verified && verification.company) {
+          setMatchedCompany(verification.company);
+          catalogProduct.company_id = verification.company.id;
+          if (verification.matchedBrand && !catalogProduct.brand) {
+            catalogProduct.brand = verification.matchedBrand;
+          }
+        }
+      }
+
       setProduct(catalogProduct);
 
       // Mark as external barcode requiring verification
@@ -476,14 +561,9 @@ export default function ScannerPage() {
         return;
       }
 
-      // Check if user is near a registered collection point
-      const { data: locations } = await supabase
-        .from('recycling_locations')
-        .select('name, lat, lng')
-        .eq('is_active', true);
-
-      if (locations && locations.length > 0) {
-        const nearPoint = locations.find(loc => {
+      // Check if user is near a registered collection point (using real-time synced data)
+      if (dbLocations.length > 0) {
+        const nearPoint = dbLocations.find(loc => {
           const dist = Math.sqrt(
             Math.pow((loc.lat - userCoords.lat) * 111000, 2) +
             Math.pow((loc.lng - userCoords.lng) * 111000 * Math.cos(userCoords.lat * Math.PI / 180), 2)
@@ -703,14 +783,9 @@ export default function ScannerPage() {
         if (accuracy > 100) {
           setLocationWarning('La precisión GPS es baja. Acerca más al punto de acopio para mejor verificación.');
         } else {
-          // Check if user is near a collection point
-          const { data: locations } = await supabase
-            .from('recycling_locations')
-            .select('name, lat, lng')
-            .eq('is_active', true);
-
-          if (locations && locations.length > 0) {
-            const nearPoint = locations.find(loc => {
+          // Check if user is near a collection point (using real-time synced data)
+          if (dbLocations.length > 0) {
+            const nearPoint = dbLocations.find(loc => {
               const dist = Math.sqrt(
                 Math.pow((loc.lat - latitude) * 111000, 2) +
                 Math.pow((loc.lng - longitude) * 111000 * Math.cos(latitude * Math.PI / 180), 2)
@@ -1382,7 +1457,7 @@ export default function ScannerPage() {
                         className="w-full bg-slate-800 border border-slate-700 text-white rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-emerald-500 appearance-none transition-colors"
                       >
                         <option value="">Selecciona una opción</option>
-                        {q.options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                        {(q.key === 'collection_point' ? collectionPoints : q.options).map(opt => <option key={opt} value={opt}>{opt}</option>)}
                       </select>
                       <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
                     </div>

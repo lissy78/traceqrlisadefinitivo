@@ -110,6 +110,16 @@ export default function MapPage() {
         () => {}
       );
     }
+
+    // Real-time subscription: update map when admin adds/edits locations
+    const channel = supabase
+      .channel('recycling_locations_map')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'recycling_locations' }, () => {
+        loadLocations();
+      })
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
   }, []);
 
   useEffect(() => {

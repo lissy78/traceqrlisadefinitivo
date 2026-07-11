@@ -19,7 +19,16 @@ export default function AdminUsers() {
   const [editCompany, setEditCompany] = useState<string>('');
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => { loadData(); }, []);
+  useEffect(() => {
+    loadData();
+
+    const channel = supabase
+      .channel('profiles_rt')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => { loadData(); })
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, []);
 
   async function loadData() {
     const [{ data: ud }, { data: cd }] = await Promise.all([

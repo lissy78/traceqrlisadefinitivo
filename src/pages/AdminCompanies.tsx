@@ -21,7 +21,16 @@ export default function AdminCompanies() {
 
   const INDUSTRIES = ['Bebidas', 'Alimentos', 'Farmaceutica', 'Cosmeticos', 'Limpieza', 'Otro'];
 
-  useEffect(() => { loadCompanies(); }, []);
+  useEffect(() => {
+    loadCompanies();
+
+    const channel = supabase
+      .channel('companies_rt')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'companies' }, () => { loadCompanies(); })
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, []);
 
   async function loadCompanies() {
     const { data } = await supabase.from('companies').select('*').order('created_at', { ascending: false });

@@ -60,7 +60,16 @@ export default function AdminUCID() {
   const companyId = profile?.company_id;
   const isAdmin = profile?.role === 'admin';
 
-  useEffect(() => { loadBatches(); }, [companyId]);
+  useEffect(() => {
+    loadBatches();
+
+    const channel = supabase
+      .channel('ucid_batches_rt')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'ucid_batches' }, () => { loadBatches(); })
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [companyId]);
 
   async function loadBatches() {
     const query = supabase.from('ucid_batches').select('*').order('created_at', { ascending: false });
@@ -156,14 +165,15 @@ export default function AdminUCID() {
       return;
     }
 
-    // Create downloadable CSV
+    // Create downloadable CSV for Trace QR Hub
     const csvRows = [
-      ['short_code', 'qr_url', 'ucid_hash', 'product_name', 'status'],
-      ...data.ucids.map((u: { short_code: string; qr_data: string; ucid_hash: string; product_name: string | null; status: string }) => [
+      ['short_code', 'qr_url', 'ucid_hash', 'product_name', 'product_brand', 'status'],
+      ...data.ucids.map((u: { short_code: string; qr_data: string; ucid_hash: string; product_name: string | null; product_brand: string | null; status: string }) => [
         u.short_code,
         u.qr_data,
         u.ucid_hash,
         u.product_name || '',
+        u.product_brand || '',
         u.status,
       ]),
     ];
@@ -173,7 +183,7 @@ export default function AdminUCID() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `ucid_batch_${batchId.slice(0, 8)}.csv`;
+    link.download = `traceqr_hub_batch_${batchId.slice(0, 8)}.csv`;
     link.click();
     URL.revokeObjectURL(url);
 

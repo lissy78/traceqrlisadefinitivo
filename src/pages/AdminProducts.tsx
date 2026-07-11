@@ -7,7 +7,16 @@ export default function AdminProducts() {
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => { loadProducts(); }, []);
+  useEffect(() => {
+    loadProducts();
+
+    const channel = supabase
+      .channel('product_catalog_rt')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'product_catalog' }, () => { loadProducts(); })
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, []);
 
   async function loadProducts() {
     const { data } = await supabase
