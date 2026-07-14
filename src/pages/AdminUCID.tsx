@@ -4,7 +4,7 @@ import { supabase } from '../lib/supabase';
 import {
   QrCode, Plus, Download, Loader2, Package, Hash, Building2,
   Calendar, ChevronDown, AlertCircle, CheckCircle2, Clock,
-  Trash2, Eye, FileText
+  Trash2, Eye, FileText, Factory
 } from 'lucide-react';
 
 interface UCIDBatch {
@@ -55,10 +55,20 @@ export default function AdminUCID() {
     product_brand: '',
     container_type: 'PET',
     notes: '',
+    selectedCompanyId: '',
   });
+  const [companies, setCompanies] = useState<{ id: string; name: string }[]>([]);
 
   const companyId = profile?.company_id;
   const isAdmin = profile?.role === 'admin';
+
+  useEffect(() => {
+    if (isAdmin) {
+      supabase.from('companies').select('id, name').order('name').then(({ data }) => {
+        setCompanies(data ?? []);
+      });
+    }
+  }, [isAdmin]);
 
   useEffect(() => {
     loadBatches();
@@ -90,10 +100,14 @@ export default function AdminUCID() {
       return;
     }
 
+    const targetCompanyId = isAdmin ? form.selectedCompanyId : companyId;
+    if (!targetCompanyId) {
+      setError(isAdmin ? 'Selecciona una empresa' : 'No tienes empresa vinculada');
+      return;
+    }
+
     setSaving(true);
     setError('');
-
-    const targetCompanyId = companyId!;
     const pricePerUcid = 45;
     const totalPrice = form.quantity * pricePerUcid;
     const prefix = `TRQ-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
@@ -145,7 +159,7 @@ export default function AdminUCID() {
     setSuccess(`Generados ${form.quantity.toLocaleString('es-CO')} UCIDs exitosamente`);
     setShowForm(false);
     setSaving(false);
-    setForm({ batch_name: '', quantity: 1000, product_name: '', product_brand: '', container_type: 'PET', notes: '' });
+    setForm({ batch_name: '', quantity: 1000, product_name: '', product_brand: '', container_type: 'PET', notes: '', selectedCompanyId: '' });
     await loadBatches();
 
     setTimeout(() => setSuccess(''), 5000);
@@ -279,6 +293,23 @@ export default function AdminUCID() {
           </div>
 
           <div className="grid md:grid-cols-2 gap-4">
+            {isAdmin && (
+              <div className="md:col-span-2">
+                <label className="block text-xs text-slate-400 mb-1.5 flex items-center gap-1.5">
+                  <Factory className="w-3.5 h-3.5" /> Empresa destinataria *
+                </label>
+                <select
+                  value={form.selectedCompanyId}
+                  onChange={e => setForm(f => ({ ...f, selectedCompanyId: e.target.value }))}
+                  className="w-full bg-slate-800 border border-slate-700 text-white rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-emerald-500"
+                >
+                  <option value="">Selecciona una empresa...</option>
+                  {companies.map(c => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
             <div>
               <label className="block text-xs text-slate-400 mb-1.5">Nombre del lote *</label>
               <input

@@ -4,7 +4,7 @@ import { getDisplayName } from '../lib/utils';
 import {
   Recycle, LayoutDashboard, QrCode, Trophy, MapPin, Package, MapPinned,
   Users, Building2, Settings, LogOut, Menu, X, ChevronRight, Star, Gift, Bot, Hash,
-  Printer, Tag
+  Tag
 } from 'lucide-react';
 
 interface NavItem {
@@ -35,7 +35,6 @@ export default function AppLayout({ children, activeView, onNavigate }: AppLayou
     { label: 'Dashboard', icon: <LayoutDashboard className="w-5 h-5" />, view: 'company-dashboard' },
     { label: 'Mapa envases', icon: <MapPin className="w-5 h-5" />, view: 'company-map' },
     { label: 'UCIDs', icon: <Hash className="w-5 h-5" />, view: 'company-ucid' },
-    { label: 'Imprimir QRs', icon: <Printer className="w-5 h-5" />, view: 'ucid-print' },
     { label: 'Trazabilidad', icon: <Package className="w-5 h-5" />, view: 'traceability' },
     { label: 'IA Chatbot', icon: <Bot className="w-5 h-5" />, view: 'ai-chatbot' },
     { label: 'Analiticas', icon: <Trophy className="w-5 h-5" />, view: 'analytics' },
@@ -48,7 +47,6 @@ export default function AppLayout({ children, activeView, onNavigate }: AppLayou
     { label: 'Productos', icon: <Package className="w-5 h-5" />, view: 'admin-products' },
     { label: 'Lineas Producto', icon: <Tag className="w-5 h-5" />, view: 'admin-product-lines' },
     { label: 'UCIDs', icon: <Hash className="w-5 h-5" />, view: 'admin-ucid' },
-    { label: 'Imprimir QRs', icon: <Printer className="w-5 h-5" />, view: 'ucid-print' },
     { label: 'Puntos Acopio', icon: <MapPinned className="w-5 h-5" />, view: 'admin-locations' },
     { label: 'Stock Refrigerios', icon: <Gift className="w-5 h-5" />, view: 'admin-stock' },
     { label: 'IA Chatbot', icon: <Bot className="w-5 h-5" />, view: 'ai-chatbot' },
