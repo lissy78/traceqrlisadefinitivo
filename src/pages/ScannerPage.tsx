@@ -568,7 +568,7 @@ export default function ScannerPage() {
             Math.pow((loc.lat - userCoords.lat) * 111000, 2) +
             Math.pow((loc.lng - userCoords.lng) * 111000 * Math.cos(userCoords.lat * Math.PI / 180), 2)
           );
-          return dist < 100; // Within 100 meters
+          return dist < 500; // Within 500 meters
         });
 
         if (!nearPoint) {
@@ -790,7 +790,7 @@ export default function ScannerPage() {
                 Math.pow((loc.lat - latitude) * 111000, 2) +
                 Math.pow((loc.lng - longitude) * 111000 * Math.cos(latitude * Math.PI / 180), 2)
               );
-              return dist < 200; // Within 200 meters
+              return dist < 500; // Within 500 meters
             });
 
             if (!nearPoint) {
