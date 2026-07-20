@@ -133,49 +133,149 @@ function brandsMatch(selected: string, expected: string): boolean {
   return a === b || a.includes(b) || b.includes(a);
 }
 
-function isTraceQRUCID(code: string): { isUCID: boolean; shortCode?: string; ucidHash?: string } {
-  // Pattern 1: Full URL like traceqr.app/s/SHORTCODE/HASHPART
-  const urlMatch = code.match(/traceqr\.app\/s\/([A-Z0-9]{8})\/([a-f0-9]+)/i);
-  if (urlMatch) {
-    return { isUCID: true, shortCode: urlMatch[1], ucidHash: undefined };
+function isTraceQRUCID(code: string): {
+  isUCID: boolean;
+  qrData?: string;
+  shortCode?: string;
+  ucidHash?: string;
+} {
+  const trimmed = code.trim();
+
+  // Opción B: URL completa generada desde el CSV.
+  // Ejemplo:
+  // https://traceqr.app/s/58E60001/abc123...?batch=...&index=1&token=...
+  try {
+    const url = new URL(trimmed);
+
+    const batch = url.searchParams.get('batch');
+    const index = url.searchParams.get('index');
+    const token = url.searchParams.get('token');
+
+    const pathParts = url.pathname.split('/').filter(Boolean);
+    const shortCode = pathParts[0] === 's' ? pathParts[1] : undefined;
+
+    if (batch && index && token && /^[0-9a-f]{128}$/i.test(token)) {
+      return {
+        isUCID: true,
+        qrData: trimmed,
+        shortCode,
+        ucidHash: token.toLowerCase(),
+      };
+    }
+
+    // Compatibilidad con URLs antiguas tipo /s/SHORT/HASHCORTO.
+    // No mandamos qrData a la Edge Function porque esas URLs antiguas no tienen batch/index/token.
+    if (pathParts[0] === 's' && shortCode) {
+      return {
+        isUCID: true,
+        shortCode,
+      };
+    }
+  } catch {
+    // No era una URL completa, seguimos con patrones manuales.
   }
-  // Pattern 2: Just short code with hash part: SHORTCODE/HASHPART
-  const shortMatch = code.match(/^([A-Z0-9]{8})\/([a-f0-9]{16,})$/i);
+
+  // Opción B pegada manualmente sin URL completa, pero con query.
+  const queryLikeMatch = trimmed.match(
+    /batch=([0-9a-f-]{36}).*index=([0-9]+).*token=([a-f0-9]{128})/i,
+  );
+
+  if (queryLikeMatch) {
+    return {
+      isUCID: true,
+      qrData: trimmed,
+      ucidHash: queryLikeMatch[3].toLowerCase(),
+    };
+  }
+
+  // Compatibilidad con sistema viejo: SHORTCODE/HASHCORTO.
+  const shortMatch = trimmed.match(/^([A-Z0-9]{8})\/([a-f0-9]{16,})$/i);
+
   if (shortMatch) {
-    return { isUCID: true, shortCode: shortMatch[1], ucidHash: undefined };
+    return {
+      isUCID: true,
+      shortCode: shortMatch[1].toUpperCase(),
+    };
   }
-  // Pattern 3: 128-char hex hash (full UCID hash)
-  if (/^[a-f0-9]{128}$/i.test(code)) {
-    return { isUCID: true, shortCode: undefined, ucidHash: code.toLowerCase() };
+
+  // Compatibilidad con sistema viejo: solo hash completo guardado en ucids.
+  if (/^[a-f0-9]{128}$/i.test(trimmed)) {
+    return {
+      isUCID: true,
+      ucidHash: trimmed.toLowerCase(),
+    };
   }
+
   return { isUCID: false };
 }
 
-// Look up UCID by short_code or full hash, then validate
-async function lookupAndValidateUCID(shortCode?: string, ucidHash?: string): Promise<{ valid: boolean; error?: string; data?: Record<string, unknown> }> {
+// Look up UCID by qrData, short_code or full hash, then validate
+async function lookupAndValidateUCID(params: {
+  qrData?: string;
+  shortCode?: string;
+  ucidHash?: string;
+}): Promise<{ valid: boolean; error?: string; data?: Record<string, unknown> }> {
   try {
-    // If we have the full hash, use the edge function
-    if (ucidHash && /^[a-f0-9]{128}$/i.test(ucidHash)) {
+    // Nueva opción B: validar contra batch_hash usando la Edge Function.
+    if (params.qrData) {
       const { data, error } = await supabase.functions.invoke('ucid-generator', {
-        body: { action: 'validate', ucidHash },
+        body: {
+          action: 'validate',
+          qrData: params.qrData,
+        },
       });
+
       if (error) return { valid: false, error: error.message };
-      return data;
+      if (data?.valid) return data;
+
+      return {
+        valid: false,
+        error: data?.error || 'QR inválido o falsificado',
+      };
     }
 
-    // If we only have short_code, look up directly in the DB
-    if (shortCode) {
+    // Compatibilidad con UCIDs viejos guardados en la tabla ucids por hash.
+    if (params.ucidHash && /^[a-f0-9]{128}$/i.test(params.ucidHash)) {
       const { data, error } = await supabase
         .from('ucids')
         .select('*')
-        .eq('short_code', shortCode.toUpperCase())
+        .eq('ucid_hash', params.ucidHash.toLowerCase())
         .maybeSingle();
 
       if (error) return { valid: false, error: error.message };
       if (!data) return { valid: false, error: 'UCID no encontrado' };
       if (data.status === 'scanned') return { valid: false, error: 'Este envase ya fue escaneado' };
 
-      return { valid: true, data: { ...data, ucid_id: data.id, ucid_hash: data.ucid_hash } };
+      return {
+        valid: true,
+        data: {
+          ...data,
+          ucid_id: data.id,
+          ucid_hash: data.ucid_hash,
+        },
+      };
+    }
+
+    // Compatibilidad con UCIDs viejos guardados en la tabla ucids por short_code.
+    if (params.shortCode) {
+      const { data, error } = await supabase
+        .from('ucids')
+        .select('*')
+        .eq('short_code', params.shortCode.toUpperCase())
+        .maybeSingle();
+
+      if (error) return { valid: false, error: error.message };
+      if (!data) return { valid: false, error: 'UCID no encontrado' };
+      if (data.status === 'scanned') return { valid: false, error: 'Este envase ya fue escaneado' };
+
+      return {
+        valid: true,
+        data: {
+          ...data,
+          ucid_id: data.id,
+          ucid_hash: data.ucid_hash,
+        },
+      };
     }
 
     return { valid: false, error: 'Código UCID inválido' };
@@ -345,7 +445,11 @@ export default function ScannerPage() {
 
     if (ucidCheck.isUCID) {
       // UCID flow - validate against database
-      const validation = await lookupAndValidateUCID(ucidCheck.shortCode, ucidCheck.ucidHash);
+      const validation = await lookupAndValidateUCID({
+        qrData: ucidCheck.qrData,
+        shortCode: ucidCheck.shortCode,
+        ucidHash: ucidCheck.ucidHash,
+      });
 
       if (!validation.valid) {
         setError(validation.error || 'UCID invalido');
@@ -356,6 +460,7 @@ export default function ScannerPage() {
       // UCID is valid - get company info
       const ucidData = validation.data as Record<string, unknown>;
       const ucidHash = (ucidData.ucid_hash as string) || ucidCheck.ucidHash || '';
+      const canonicalScanCode = ucidHash || `${ucidData.batch_id || ''}:${ucidData.short_code || ''}` || code;
       const companyData = ucidData.company_id ? await supabase
         .from('companies')
         .select('id, name')
@@ -378,7 +483,13 @@ export default function ScannerPage() {
         description: null,
         material: (ucidData.container_type as string) || 'PET',
         weight_grams: null,
-        off_data: { ucid_hash: ucidHash, short_code: ucidData.short_code, validated: true },
+        off_data: {
+          ucid_hash: ucidHash,
+          short_code: ucidData.short_code,
+          batch_id: ucidData.batch_id,
+          qr_strategy: ucidData.strategy || 'batch_hash',
+          validated: true,
+        },
         ai_confidence: 1,
         scan_count: 1,
         created_at: '',
@@ -390,10 +501,13 @@ export default function ScannerPage() {
       setAnswers(prev => ({
         ...prev,
         _scan_type: 'qr',
-        _ucid_id: ucidData.ucid_id as string,
+        _ucid_id: (ucidData.ucid_id as string) || '',
         _ucid_hash: ucidHash,
         _ucid_brand: (ucidData.product_brand as string) || '',
         _ucid_company_id: (ucidData.company_id as string) || '',
+        _ucid_batch_id: (ucidData.batch_id as string) || '',
+        _ucid_short_code: (ucidData.short_code as string) || '',
+        _scan_barcode_key: canonicalScanCode,
       }));
       setLoading(false);
       setStep('questions');
@@ -606,7 +720,8 @@ export default function ScannerPage() {
     setLoading(true);
     setError('');
 
-    const token = await generateScanToken(profile.id, scannedCode);
+    const barcodeForScan = (answers._scan_barcode_key as string | undefined) || scannedCode;
+    const token = await generateScanToken(profile.id, barcodeForScan);
     const ucidId = answers._ucid_id as string | undefined;
     const ucidHash = answers._ucid_hash as string | undefined;
 
@@ -662,7 +777,7 @@ export default function ScannerPage() {
 
     const { error: scanErr } = await supabase.from('scan_events').insert({
       user_id: profile.id,
-      barcode: scannedCode,
+      barcode: barcodeForScan,
       scan_type: scanType === 'qr' ? 'qr' : 'barcode',
       acquisition_source: answers['acquisition_source'],
       points_earned: 10,
@@ -729,7 +844,7 @@ export default function ScannerPage() {
       const { data: existing } = await supabase
         .from('ai_product_responses')
         .select('*')
-        .eq('barcode', scannedCode)
+        .eq('barcode', barcodeForScan)
         .eq('question_key', key)
         .maybeSingle();
 
@@ -745,7 +860,7 @@ export default function ScannerPage() {
         }
       } else {
         await supabase.from('ai_product_responses').insert({
-          barcode: scannedCode, question_key: key, answer: valueToSave, confidence: 0.5, vote_count: 1,
+          barcode: barcodeForScan, question_key: key, answer: valueToSave, confidence: 0.5, vote_count: 1,
         });
       }
     }
