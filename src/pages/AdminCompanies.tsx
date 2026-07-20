@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase, Company } from '../lib/supabase';
-import { Building2, Plus, Search, Edit3, Trash2, X, Check, Mail, Briefcase, Loader2, Shield, ShieldOff, Eye, EyeOff } from 'lucide-react';
+import { Building2, Plus, Search, Edit3, Trash2, X, Check, Mail, Briefcase, Loader2, Shield, ShieldOff, Eye, EyeOff, Lock, KeyRound, Copy, CheckCircle2 } from 'lucide-react';
 
 interface CompanyWithApproval extends Company {
   is_approved?: boolean;
@@ -15,9 +15,11 @@ export default function AdminCompanies() {
   const [editId, setEditId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState({ name: '', email: '', industry: 'Bebidas', description: '' });
+  const [form, setForm] = useState({ name: '', email: '', industry: 'Bebidas', description: '', password: '' });
   const [error, setError] = useState('');
   const [companyScanCounts, setCompanyScanCounts] = useState<Record<string, number>>({});
+  const [createdCreds, setCreatedCreds] = useState<{ email: string; password: string; name: string } | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const INDUSTRIES = ['Bebidas', 'Alimentos', 'Farmaceutica', 'Cosmeticos', 'Limpieza', 'Otro'];
 
@@ -53,16 +55,17 @@ export default function AdminCompanies() {
 
   function startEdit(c: CompanyWithApproval) {
     setEditId(c.id);
-    setForm({ name: c.name, email: c.email, industry: c.industry ?? 'Bebidas', description: c.description ?? '' });
+    setForm({ name: c.name, email: c.email, industry: c.industry ?? 'Bebidas', description: c.description ?? '', password: '' });
     setShowForm(true);
     setError('');
   }
 
   function startCreate() {
     setEditId(null);
-    setForm({ name: '', email: '', industry: 'Bebidas', description: '' });
+    setForm({ name: '', email: '', industry: 'Bebidas', description: '', password: '' });
     setShowForm(true);
     setError('');
+    setCreatedCreds(null);
   }
 
   async function handleSave() {
@@ -72,13 +75,48 @@ export default function AdminCompanies() {
     if (editId) {
       const { error: e } = await supabase.from('companies').update({ name: form.name, email: form.email, industry: form.industry, description: form.description || null }).eq('id', editId);
       if (e) { setError(e.message); setSaving(false); return; }
+      await loadCompanies();
+      setShowForm(false);
+      setSaving(false);
     } else {
-      const { error: e } = await supabase.from('companies').insert({ name: form.name, email: form.email, industry: form.industry, description: form.description || null, is_approved: false });
-      if (e) { setError(e.message); setSaving(false); return; }
+      // Create company + auth user via edge function
+      if (!form.password.trim() || form.password.length < 6) {
+        setError('La contraseña debe tener al menos 6 caracteres');
+        setSaving(false); return;
+      }
+      const { data: { session } } = await supabase.auth.getSession();
+      const fnRes = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-company-user`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session?.access_token ?? ''}`,
+        },
+        body: JSON.stringify({
+          companyName: form.name,
+          email: form.email,
+          password: form.password,
+          industry: form.industry,
+          description: form.description,
+          adminId: session?.user?.id,
+        }),
+      });
+      const fnData = await fnRes.json();
+      if (!fnRes.ok) {
+        setError(fnData.error || 'Error al crear empresa');
+        setSaving(false); return;
+      }
+      await loadCompanies();
+      setShowForm(false);
+      setSaving(false);
+      setCreatedCreds({ email: form.email, password: form.password, name: form.name });
     }
-    await loadCompanies();
-    setShowForm(false);
-    setSaving(false);
+  }
+
+  function copyCreds() {
+    const text = `TraceQR - Acceso Empresa\nEmpresa: ${createdCreds?.name}\nCorreo: ${createdCreds?.email}\nContraseña: ${createdCreds?.password}\nInicia sesión en: ${window.location.origin}`;
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   }
 
   async function handleDelete(id: string) {
@@ -135,10 +173,50 @@ export default function AdminCompanies() {
       <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl px-4 py-3 flex items-start gap-3">
         <Shield className="w-5 h-5 text-blue-400 shrink-0 mt-0.5" />
         <div>
-          <p className="text-blue-300 text-sm font-medium">Control de privacidad activado</p>
-          <p className="text-blue-400/70 text-xs">Solo las empresas aprobadas pueden acceder a su dashboard y ver sus datos de trazabilidad. Las empresas pendientes no tienen acceso.</p>
+          <p className="text-blue-300 text-sm font-medium">Acceso sincronizado e inmediato</p>
+          <p className="text-blue-400/70 text-xs">Al crear una empresa, se generan credenciales de acceso (correo + contrasena). La empresa puede iniciar sesion inmediatamente y acceder a su trazabilidad, marcas y lotes.</p>
         </div>
       </div>
+
+      {/* Credentials confirmation modal */}
+      {createdCreds && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-slate-900 border border-emerald-500/30 rounded-2xl p-6 max-w-md w-full space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center">
+                <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+              </div>
+              <div>
+                <h3 className="text-white font-semibold">Empresa creada con exito</h3>
+                <p className="text-slate-400 text-xs">Comparte estas credenciales con la empresa</p>
+              </div>
+            </div>
+            <div className="bg-slate-800/60 border border-slate-700 rounded-xl p-4 space-y-2">
+              <div className="flex justify-between items-center">
+                <span className="text-slate-400 text-xs">Empresa</span>
+                <span className="text-white text-sm font-medium">{createdCreds.name}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-400 text-xs flex items-center gap-1"><Mail className="w-3 h-3" /> Correo</span>
+                <span className="text-white text-sm font-mono">{createdCreds.email}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-400 text-xs flex items-center gap-1"><KeyRound className="w-3 h-3" /> Contrasena</span>
+                <span className="text-white text-sm font-mono">{createdCreds.password}</span>
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <button onClick={copyCreds} className="flex-1 flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 text-white px-4 py-2.5 rounded-xl text-sm font-medium transition-colors">
+                {copied ? <CheckCircle2 className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                {copied ? 'Copiado' : 'Copiar credenciales'}
+              </button>
+              <button onClick={() => setCreatedCreds(null)} className="flex-1 bg-emerald-500 hover:bg-emerald-400 text-white px-4 py-2.5 rounded-xl text-sm font-medium transition-colors">
+                Listo
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Form */}
       {showForm && (
@@ -167,12 +245,21 @@ export default function AdminCompanies() {
               <label className="block text-xs text-slate-400 mb-1.5">Descripcion</label>
               <input value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} placeholder="Descripcion breve..." className="w-full bg-slate-800 border border-slate-700 text-white placeholder-slate-500 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-emerald-500 transition-colors" />
             </div>
+            {!editId && (
+              <div className="md:col-span-2">
+                <label className="block text-xs text-slate-400 mb-1.5 flex items-center gap-1.5">
+                  <Lock className="w-3.5 h-3.5" /> Contraseña de acceso para la empresa *
+                </label>
+                <input type="text" value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} placeholder="Minimo 6 caracteres" className="w-full bg-slate-800 border border-slate-700 text-white placeholder-slate-500 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-emerald-500 transition-colors" />
+                <p className="text-slate-500 text-xs mt-1">La empresa usara este correo y contraseña para iniciar sesion. La empresa queda aprobada automaticamente.</p>
+              </div>
+            )}
           </div>
           <div className="flex gap-3 justify-end">
             <button onClick={() => setShowForm(false)} className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-sm transition-colors">Cancelar</button>
             <button onClick={handleSave} disabled={saving} className="flex items-center gap-2 px-4 py-2 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-white rounded-xl text-sm font-medium transition-colors">
               {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-              {editId ? 'Guardar' : 'Crear empresa'}
+              {editId ? 'Guardar' : 'Crear empresa con acceso'}
             </button>
           </div>
         </div>
